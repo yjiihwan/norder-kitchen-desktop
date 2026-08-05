@@ -1,0 +1,47 @@
+{
+  "name": "norder-kitchen",
+  "productName": "N오더 주방",
+  "version": "0.1.0",
+  "private": true,
+  "description": "N오더 식당(점주·주방)용 주문 접수 데스크톱 앱 — staging 전용",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "kr.co.ngym.norder.kitchen",
+    "productName": "N오더 주방",
+    "artifactName": "NOrder-Kitchen-Setup-${version}.exe",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "N오더 주방"
+    }
+  }
+}
