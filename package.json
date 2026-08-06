@@ -1,13 +1,14 @@
 {
   "name": "norder-kitchen",
   "productName": "N오더 주방",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "N오더 식당(점주·주방)용 주문 접수 데스크톱 앱 — staging 전용",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win --x64"
+    "dist:win": "electron-builder --win --x64",
+    "dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --universal -c.productName='NOrder Kitchen' '-c.mac.extendInfo.CFBundleDisplayName=N오더 주방'"
   },
   "devDependencies": {
     "electron": "^38.2.0",
@@ -16,7 +17,7 @@
   "build": {
     "appId": "kr.co.ngym.norder.kitchen",
     "productName": "N오더 주방",
-    "artifactName": "NOrder-Kitchen-Setup-${version}.exe",
+    "afterPack": "build/adhoc-sign.js",
     "directories": {
       "output": "dist"
     },
@@ -34,7 +35,24 @@
           ]
         }
       ],
+      "artifactName": "NOrder-Kitchen-Setup-${version}.exe",
       "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "artifactName": "NOrder-Kitchen-${version}-${arch}.dmg",
+      "icon": "build/icon.png",
+      "category": "public.app-category.business"
+    },
+    "dmg": {
+      "writeUpdateInfo": false
     },
     "nsis": {
       "oneClick": true,
