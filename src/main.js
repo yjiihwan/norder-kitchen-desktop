@@ -5,9 +5,9 @@ const {
   dialog, ipcMain, session,
 } = require("electron");
 const path = require("path");
-const fs = require("fs");
 const printing = require("./printing");
 const sampleOrder = require("./sample-order");
+const { loadSettingsFile, saveSettingsFile } = require("./settings");
 
 const DEFAULT_SERVER = "https://norder-web-staging.up.railway.app";
 const START_PATH = "/partner/delivery";
@@ -17,15 +17,10 @@ const PARTITION = "persist:norder-kitchen";
 const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
 function loadSettings() {
   const base = { autoLaunch: false, kiosk: false, serverUrl: DEFAULT_SERVER, printer: { ...printing.DEFAULT_PRINTER } };
-  try {
-    const saved = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-    return { ...base, ...saved, printer: { ...base.printer, ...(saved.printer || {}) } };
-  } catch {
-    return base;
-  }
+  return loadSettingsFile(settingsFile(), base);
 }
 function saveSettings(s) {
-  try { fs.writeFileSync(settingsFile(), JSON.stringify(s, null, 2)); } catch { /* 디스크 오류 시 다음 부팅에 기본값 */ }
+  saveSettingsFile(settingsFile(), s);
 }
 
 let settings;

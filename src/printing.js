@@ -15,12 +15,14 @@ const DEFAULT_PRINTER = {
   osPrinterName: "",        // usbraw(윈도우 프린터 큐 이름) · system(장치 이름)
   widthMm: 80,              // 80 | 58
   autoPrint: true,          // 수락 시 자동 인쇄
+  copies: 1,                // 주문 수락당 인쇄 매수(1~5) — 자동 인쇄·재인쇄 공통
   // raster(기본): 전표를 이미지로 변환해 인쇄 — 프린터 한글 펌웨어·코드페이지와 무관, 전 기종 호환.
   // text: CP949 텍스트 직접 전송 — 국산(한글 내장) 기종 전용, 빠름.
   escposOutput: "raster",
 };
 
 const colsOf = (widthMm) => (Number(widthMm) === 58 ? 32 : 48);
+const copiesOf = (p) => Math.min(5, Math.max(1, Math.trunc(Number(p.copies) || 1)));
 const dotsOf = (widthMm) => (Number(widthMm) === 58 ? 384 : 576); // 203dpi 인쇄 도트폭
 
 // ── 네트워크 ESC/POS (IP:9100) ───────────────────────────────
@@ -217,34 +219,49 @@ async function printOrder(payload, printer, opts = {}) {
   }
   if (!payload.reprint && !p.autoPrint && !opts.force) return { ok: true, skipped: "autoPrint-off" };
 
+  // 매수(copies)는 한 번의 printOrder 안에서 N장 출력 — 주문 단위 중복 방지(printedOnce)와는
+  // 층위가 달라 충돌하지 않는다(새로고침·재진입에 의한 재발동만 막힌다).
+  const copies = copiesOf(p);
   const cols = colsOf(p.widthMm);
   const lines = buildReceiptLines(payload, cols);
+  const markPrinted = () => { if (!payload.reprint && payload.orderId) printedOnce.add(payload.orderId); };
   try {
     if (p.mode === "network") {
       if (!p.ip) return { ok: false, error: "프린터 IP가 설정되지 않았어요" };
-      await sendToNetwork(await buildEscposBuffer(p, lines, cols), p.ip, p.port);
+      const one = await buildEscposBuffer(p, lines, cols);
+      // 전표마다 컷 명령이 붙어 있어 이어붙이면 장 사이에서 자동 절단된다
+      await sendToNetwork(Buffer.concat(Array(copies).fill(one)), p.ip, p.port);
     } else if (p.mode === "usbraw") {
       if (!p.osPrinterName) return { ok: false, error: "프린터(큐 이름)가 선택되지 않았어요" };
-      await sendToOsQueueRaw(await buildEscposBuffer(p, lines, cols), p.osPrinterName);
+      const one = await buildEscposBuffer(p, lines, cols);
+      await sendToOsQueueRaw(Buffer.concat(Array(copies).fill(one)), p.osPrinterName);
     } else if (p.mode === "system") {
-      await printViaSystem(renderReceiptHtml(lines, p.widthMm), p.widthMm, p.osPrinterName);
+      for (let c = 0; c < copies; c++) {
+        await printViaSystem(renderReceiptHtml(lines, p.widthMm), p.widthMm, p.osPrinterName);
+      }
     } else { // preview
       const dir = path.join(app.getPath("userData"), "print-previews");
       fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, `receipt-${(payload.orderNo || "test").replace(/[^\w-]/g, "_")}-${Date.now()}.png`);
-      await renderPreviewPng(renderReceiptHtml(lines, p.widthMm), p.widthMm, file);
-      if (!opts.silentPreview) shell.openPath(file);
-      if (!payload.reprint && payload.orderId) printedOnce.add(payload.orderId);
-      return { ok: true, previewFile: file };
+      const safe = (payload.orderNo || "test").replace(/[^\w-]/g, "_");
+      const stamp = Date.now();
+      const files = [];
+      for (let c = 0; c < copies; c++) {
+        const file = path.join(dir, `receipt-${safe}-${stamp}-${c + 1}of${copies}.png`);
+        await renderPreviewPng(renderReceiptHtml(lines, p.widthMm), p.widthMm, file);
+        files.push(file);
+      }
+      if (!opts.silentPreview) shell.openPath(files[0]);
+      markPrinted();
+      return { ok: true, previewFile: files[0], previewFiles: files, copies };
     }
-    if (!payload.reprint && payload.orderId) printedOnce.add(payload.orderId);
-    return { ok: true };
+    markPrinted();
+    return { ok: true, copies };
   } catch (e) {
     return { ok: false, error: e.message };
   }
 }
 
 module.exports = {
-  printOrder, DEFAULT_PRINTER, colsOf, dotsOf,
+  printOrder, DEFAULT_PRINTER, colsOf, dotsOf, copiesOf,
   renderPreviewPng, renderRasterBitmap, bitmapToRaster, buildEscposBuffer,
 };

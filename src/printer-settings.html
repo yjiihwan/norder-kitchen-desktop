@@ -95,6 +95,22 @@
     <label class="toggle"><input type="checkbox" name="autoPrint" data-testid="ps-auto"> 켜기</label>
   </div>
 
+  <div class="card">
+    <div class="row">
+      <h2 style="margin:0">주문 수락당 인쇄 매수</h2>
+      <span class="seg" data-testid="ps-copies">
+        <button type="button" data-c="1">1매</button>
+        <button type="button" data-c="2">2매</button>
+        <button type="button" data-c="3">3매</button>
+        <button type="button" data-c="4">4매</button>
+        <button type="button" data-c="5">5매</button>
+      </span>
+    </div>
+    <div style="color:var(--muted);font-size:12px;margin-top:8px">
+      수락 시 자동 인쇄와 [주문서 재인쇄] 버튼 모두 설정한 매수만큼 출력돼요. (예: 주방용·홀용 2매)
+    </div>
+  </div>
+
   <div class="btns">
     <button class="btn btn--cta" id="save" data-testid="ps-save">저장</button>
     <button class="btn" id="test" data-testid="ps-test">테스트 인쇄</button>
@@ -106,6 +122,7 @@
 <script>
   const $ = (s) => document.querySelector(s);
   let widthMm = 80;
+  let copies = 1;
 
   function currentForm() {
     return {
@@ -118,6 +135,7 @@
           : $('select[name=usbPrinter]').value) || "",
       widthMm,
       autoPrint: $('input[name=autoPrint]').checked,
+      copies,
       escposOutput: document.querySelector('input[name=escposOutput]:checked')?.value || 'raster',
     };
   }
@@ -129,9 +147,13 @@
   }
 
   function paintWidth() {
-    document.querySelectorAll('#msg, .seg [data-w]').forEach(() => {});
     document.querySelectorAll('.seg [data-w]').forEach((b) =>
       b.classList.toggle('on', Number(b.dataset.w) === widthMm));
+  }
+
+  function paintCopies() {
+    document.querySelectorAll('.seg [data-c]').forEach((b) =>
+      b.classList.toggle('on', Number(b.dataset.c) === copies));
   }
 
   window.norderPS.getState().then(({ printer, osPrinters }) => {
@@ -151,11 +173,15 @@
       `input[name=escposOutput][value=${printer.escposOutput === 'text' ? 'text' : 'raster'}]`).checked = true;
     widthMm = Number(printer.widthMm) === 58 ? 58 : 80;
     $('input[name=autoPrint]').checked = printer.autoPrint !== false;
+    copies = Math.min(5, Math.max(1, Math.trunc(Number(printer.copies) || 1)));
     paintWidth();
+    paintCopies();
   });
 
   document.querySelectorAll('.seg [data-w]').forEach((b) =>
     b.addEventListener('click', () => { widthMm = Number(b.dataset.w); paintWidth(); }));
+  document.querySelectorAll('.seg [data-c]').forEach((b) =>
+    b.addEventListener('click', () => { copies = Number(b.dataset.c); paintCopies(); }));
 
   $('#save').addEventListener('click', async () => {
     await window.norderPS.save(currentForm());
