@@ -1,7 +1,7 @@
 {
   "name": "norder-kitchen",
   "productName": "N오더 주방",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "N오더 식당(점주·주방)용 주문 접수 데스크톱 앱 — staging 전용",
   "main": "src/main.js",

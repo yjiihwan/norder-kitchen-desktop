@@ -70,6 +70,18 @@
       <span><b>끄기</b> — 자동 인쇄 안 함</span></label>
   </div>
 
+  <div class="card">
+    <h2>인쇄 방식 <span style="font-weight:400;color:var(--muted)">(네트워크·USB 공통)</span></h2>
+    <label class="radio"><input type="radio" name="escposOutput" value="raster" data-testid="ps-out-raster">
+      <span><b>이미지 인쇄 (기본 — 모든 기종 호환)</b>
+        <div class="desc">전표를 이미지로 변환해 보내요. 프린터의 한글 지원 여부·제조사와 관계없이 어떤 ESC/POS 감열 프린터든 똑같이 나와요. 기종을 모르면 이걸 쓰세요.</div>
+      </span></label>
+    <label class="radio"><input type="radio" name="escposOutput" value="text" data-testid="ps-out-text">
+      <span><b>텍스트 인쇄 (한글 지원 기종 전용 — 빠름)</b>
+        <div class="desc">한글(CP949)을 프린터에 직접 보내요. 한글 펌웨어 내장 기종(국산 등)에서만 정상이에요. 한글이 깨져 나오면 «이미지 인쇄»로 바꾸세요.</div>
+      </span></label>
+  </div>
+
   <div class="card row">
     <h2 style="margin:0">용지 폭</h2>
     <span class="seg" data-testid="ps-width">
@@ -106,6 +118,7 @@
           : $('select[name=usbPrinter]').value) || "",
       widthMm,
       autoPrint: $('input[name=autoPrint]').checked,
+      escposOutput: document.querySelector('input[name=escposOutput]:checked')?.value || 'raster',
     };
   }
 
@@ -134,6 +147,8 @@
       $('select[name=usbPrinter]').value = printer.osPrinterName;
       $('select[name=sysPrinter]').value = printer.osPrinterName;
     }
+    document.querySelector(
+      `input[name=escposOutput][value=${printer.escposOutput === 'text' ? 'text' : 'raster'}]`).checked = true;
     widthMm = Number(printer.widthMm) === 58 ? 58 : 80;
     $('input[name=autoPrint]').checked = printer.autoPrint !== false;
     paintWidth();

@@ -75,5 +75,60 @@ for (const [label, cols, widthMm] of [["80mm", 48, 80], ["58mm", 32, 58]]) {
   ok("CP949 밖 문자는 '?' 강등(크래시 없음)", dec.includes("이모지") && dec.includes("테스트"));
 }
 
+// ── 래스터(이미지 인쇄 — 전 기종 호환 기본 경로) ─────────────
+{
+  console.log("\n═ 래스터(GS v 0) — 이미지 인쇄");
+  const { buildEscposRaster, emulateRaster, RASTER_BAND_ROWS } = require("../src/escpos");
+
+  // 합성 비트맵(결정적 패턴, 3밴드 걸치는 높이) → 빌드 → 역파싱 → 비트 단위 일치
+  const rowBytes = 72, height = 600; // 576 도트 × 600줄
+  const data = Buffer.alloc(rowBytes * height);
+  for (let i = 0; i < data.length; i++) data[i] = (i * 37 + ((i >> 5) * 11)) & 0xff;
+  const buf = buildEscposRaster({ widthDots: 576, height, rowBytes, data });
+  const r = emulateRaster(buf);
+
+  ok("ESC @ 초기화 포함", r.init);
+  ok("GS V 부분컷 포함", r.cut);
+  ok("도트폭 복원 576", r.widthDots === 576, `got ${r.widthDots}`);
+  ok(`높이 복원 ${height}`, r.height === height, `got ${r.height}`);
+  ok("픽셀 데이터 비트 단위 일치", r.data.equals(data));
+
+  // 밴드 분할 — 저가 기종 수신 버퍼 대비
+  let bands = 0;
+  for (let i = 0; i + 2 < buf.length; i++) {
+    if (buf[i] === 0x1d && buf[i + 1] === 0x76 && buf[i + 2] === 0x30) bands++;
+  }
+  const expectBands = Math.ceil(height / RASTER_BAND_ROWS);
+  ok(`밴드 분할 ${expectBands}개 (${RASTER_BAND_ROWS}줄 단위)`, bands === expectBands, `got ${bands}`);
+
+  // 한글·코드페이지 명령 부재 — 래스터 경로는 펌웨어 의존 명령이 없어야 기종 무관
+  let fsAmp = false, escT = false;
+  for (let i = 0; i + 1 < buf.length; i++) {
+    if (buf[i] === 0x1c && buf[i + 1] === 0x26) fsAmp = true;
+    if (buf[i] === 0x1b && buf[i + 1] === 0x74) escT = true;
+  }
+  ok("FS &(한글 모드)·ESC t(코드페이지) 명령 없음", !fsAmp && !escT);
+
+  // 크기 불일치 방어
+  let threw = false;
+  try { buildEscposRaster({ widthDots: 576, height: 10, rowBytes: 72, data: Buffer.alloc(5) }); }
+  catch { threw = true; }
+  ok("래스터 크기 불일치 시 예외", threw);
+
+  // 58mm 도트폭
+  const buf58 = buildEscposRaster({ widthDots: 384, height: 8, rowBytes: 48, data: Buffer.alloc(48 * 8, 0xaa) });
+  ok("58mm 도트폭 복원 384", emulateRaster(buf58).widthDots === 384);
+}
+
+// ── 기본값·설정 UI — 기종 호환(이미지 인쇄)이 기본이어야 한다 ──
+{
+  console.log("\n═ 기본값·설정 UI");
+  const { DEFAULT_PRINTER } = require("../src/printing"); // electron 미기동이어도 상수는 안전
+  ok("기본 인쇄 방식 = raster(전 기종 호환)", DEFAULT_PRINTER.escposOutput === "raster");
+  const htmlSrc = require("fs").readFileSync(require("path").join(__dirname, "../src/printer-settings.html"), "utf8");
+  ok("설정창에 이미지/텍스트 선택 존재", htmlSrc.includes('name=escposOutput') || htmlSrc.includes('name="escposOutput"'));
+  ok("설정창 저장 폼에 escposOutput 포함", htmlSrc.includes("escposOutput:"));
+}
+
 console.log(`\n════ 통과 ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

@@ -79,4 +79,71 @@ function emulate(buf, cols = 48) {
   return { lines: out, cols };
 }
 
-module.exports = { buildEscpos, emulate };
+// ── 래스터(이미지) 인쇄 — 기종 호환 기본 경로 ─────────────────
+// 한글 폰트·코드페이지를 프린터 펌웨어에 기대지 않고, 전표를 1bpp 비트맵으로
+// 렌더해 GS v 0 로 픽셀 그대로 보낸다. ESC/POS 감열 프린터 공통 명령이라
+// 국산/수입산 어느 기종이든 동일하게 찍힌다.
+const RASTER_BAND_ROWS = 256; // 저가 기종의 수신 버퍼 한계 대비 밴드 분할
+
+function buildEscposRaster(raster, opts = {}) {
+  const { widthDots, height, rowBytes, data } = raster;
+  if (!data || data.length !== rowBytes * height) {
+    throw new Error(`래스터 크기 불일치: ${data ? data.length : 0} ≠ ${rowBytes}x${height}`);
+  }
+  const chunks = [];
+  const push = (...bytes) => chunks.push(Buffer.from(bytes));
+
+  push(ESC, 0x40);       // 초기화
+  push(ESC, 0x61, 0x00); // 왼쪽 정렬 — 비트맵이 이미 전체 폭
+
+  for (let y = 0; y < height; y += RASTER_BAND_ROWS) {
+    const rows = Math.min(RASTER_BAND_ROWS, height - y);
+    // GS v 0 m xL xH yL yH — m=0 원본 크기
+    push(GS, 0x76, 0x30, 0x00,
+      rowBytes & 0xff, (rowBytes >> 8) & 0xff,
+      rows & 0xff, (rows >> 8) & 0xff);
+    chunks.push(data.subarray(y * rowBytes, (y + rows) * rowBytes));
+  }
+
+  push(ESC, 0x64, opts.feed ?? 3); // 용지 이송
+  push(GS, 0x56, 0x42, 0x00);      // 부분 컷
+  return Buffer.concat(chunks);
+}
+
+/** 래스터 버퍼 역파싱 — 밴드를 재조립해 원본 비트맵을 복원한다(검증 게이트). */
+function emulateRaster(buf) {
+  let i = 0, rowBytes = null, feed = 0, cut = false, init = false;
+  const bands = [];
+  while (i < buf.length) {
+    const b = buf[i];
+    if (b === ESC) {
+      const c = buf[i + 1];
+      if (c === 0x40) { init = true; i += 2; continue; }
+      if (c === 0x61 || c === 0x64) { if (c === 0x64) feed = buf[i + 2]; i += 3; continue; }
+      i += 2; continue;
+    }
+    if (b === GS) {
+      const c = buf[i + 1];
+      if (c === 0x76 && buf[i + 2] === 0x30) {
+        const xB = buf[i + 4] | (buf[i + 5] << 8);
+        const rows = buf[i + 6] | (buf[i + 7] << 8);
+        if (rowBytes == null) rowBytes = xB;
+        else if (rowBytes !== xB) throw new Error("밴드 간 폭 불일치");
+        bands.push(buf.subarray(i + 8, i + 8 + xB * rows));
+        i += 8 + xB * rows; continue;
+      }
+      if (c === 0x56) { cut = true; i += 4; continue; }
+      i += 2; continue;
+    }
+    i += 1;
+  }
+  const data = Buffer.concat(bands);
+  return {
+    init, feed, cut, rowBytes: rowBytes || 0,
+    widthDots: (rowBytes || 0) * 8,
+    height: rowBytes ? data.length / rowBytes : 0,
+    data,
+  };
+}
+
+module.exports = { buildEscpos, emulate, buildEscposRaster, emulateRaster, RASTER_BAND_ROWS };

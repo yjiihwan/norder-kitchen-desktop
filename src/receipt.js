@@ -130,12 +130,19 @@ function buildReceiptLines(payload, cols) {
   return L;
 }
 
-/** 미리보기·OS 인쇄 공용 HTML — 감열지 느낌의 고정폭 렌더. widthMm: 58|80 */
-function renderReceiptHtml(lines, widthMm) {
+/**
+ * 미리보기·OS 인쇄·래스터 공용 HTML — 감열지 느낌의 고정폭 렌더. widthMm: 58|80
+ * opts.pxWidth: 지정 시 body 를 정확히 그 픽셀 폭으로(래스터 인쇄용 — 203dpi 도트폭에 맞춰
+ * 폰트·여백을 비례 확대해 렌더 → 캡처 픽셀 == 프린터 도트 1:1).
+ */
+function renderReceiptHtml(lines, widthMm, opts = {}) {
+  const basePx = (widthMm / 25.4) * 96; // CSS mm 폭의 px 환산(96dpi)
+  const k = opts.pxWidth ? opts.pxWidth / basePx : 1;
+  const px = (n) => `${Math.round(n * k * 10) / 10}px`;
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const body = lines.map((l) => {
     if (l.hr) return `<div class="hr"></div>`;
-    if (l.feed) return `<div style="height:${l.feed * 8}px"></div>`;
+    if (l.feed) return `<div style="height:${Math.round(l.feed * 8 * k)}px"></div>`;
     const cls = [
       l.align === "center" ? "c" : l.align === "right" ? "r" : "",
       l.bold ? "b" : "",
@@ -146,18 +153,19 @@ function renderReceiptHtml(lines, widthMm) {
     }
     return `<div class="ln ${cls}">${esc(l.text) || "&nbsp;"}</div>`;
   }).join("\n");
+  const padV = (4 / 25.4) * 96, padH = (3 / 25.4) * 96; // 4mm 3mm 의 px 환산
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     @page { size: ${widthMm}mm auto; margin: 0; }
     html, body { margin: 0; padding: 0; background: #fff; }
-    body { width: ${widthMm}mm; }
-    .paper { padding: 4mm 3mm; font-family: "AppleSDGothicNeo", "Malgun Gothic", monospace;
-             font-size: ${widthMm >= 80 ? 12 : 11}px; line-height: 1.45; color: #000; }
+    body { width: ${opts.pxWidth ? `${opts.pxWidth}px` : `${widthMm}mm`}; }
+    .paper { padding: ${px(padV)} ${px(padH)}; font-family: "AppleSDGothicNeo", "Malgun Gothic", monospace;
+             font-size: ${px(widthMm >= 80 ? 12 : 11)}; line-height: 1.45; color: #000; }
     .ln { white-space: pre-wrap; word-break: break-all; }
-    .kv { display: flex; justify-content: space-between; gap: 8px; }
+    .kv { display: flex; justify-content: space-between; gap: ${px(8)}; }
     .kv span:last-child { white-space: nowrap; }
     .c { text-align: center; } .r { text-align: right; } .b { font-weight: 700; }
-    .x2 { font-size: ${widthMm >= 80 ? 22 : 18}px; font-weight: 700; }
-    .hr { border-top: 1px dashed #000; margin: 4px 0; }
+    .x2 { font-size: ${px(widthMm >= 80 ? 22 : 18)}; font-weight: 700; }
+    .hr { border-top: ${Math.max(1, Math.round(k))}px dashed #000; margin: ${px(4)} 0; }
   </style></head><body><div class="paper">${body}</div></body></html>`;
 }
 

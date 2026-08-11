@@ -1,13 +1,13 @@
 // 인쇄 디스패처(메인 프로세스) — 설정에 따라 네트워크(9100)/OS 프린터 큐 RAW(USB)/OS 기본 인쇄/미리보기.
 // 실물이 없어도 검증 가능하도록 «미리보기» 모드는 전표를 PNG로 렌더해 연다.
-const { BrowserWindow, shell, app } = require("electron");
+const { BrowserWindow, shell, app, nativeImage } = require("electron");
 const net = require("net");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 const { buildReceiptLines, renderReceiptHtml } = require("./receipt");
-const { buildEscpos } = require("./escpos");
+const { buildEscpos, buildEscposRaster } = require("./escpos");
 
 const DEFAULT_PRINTER = {
   mode: "preview",          // preview | network | usbraw | system | off
@@ -15,9 +15,13 @@ const DEFAULT_PRINTER = {
   osPrinterName: "",        // usbraw(윈도우 프린터 큐 이름) · system(장치 이름)
   widthMm: 80,              // 80 | 58
   autoPrint: true,          // 수락 시 자동 인쇄
+  // raster(기본): 전표를 이미지로 변환해 인쇄 — 프린터 한글 펌웨어·코드페이지와 무관, 전 기종 호환.
+  // text: CP949 텍스트 직접 전송 — 국산(한글 내장) 기종 전용, 빠름.
+  escposOutput: "raster",
 };
 
 const colsOf = (widthMm) => (Number(widthMm) === 58 ? 32 : 48);
+const dotsOf = (widthMm) => (Number(widthMm) === 58 ? 384 : 576); // 203dpi 인쇄 도트폭
 
 // ── 네트워크 ESC/POS (IP:9100) ───────────────────────────────
 function sendToNetwork(buf, ip, port) {
@@ -149,6 +153,56 @@ function renderPreviewPng(html, widthMm, outPath) {
   });
 }
 
+// ── 래스터 렌더 (이미지 인쇄 — 기종 호환 기본 경로) ───────────
+// 전표 HTML 을 프린터 도트폭 그대로 오프스크린 렌더 → 1bpp 비트맵으로 변환.
+function renderRasterBitmap(html, pxWidth) {
+  return new Promise((resolve, reject) => {
+    const w = new BrowserWindow({
+      show: false, width: pxWidth, height: 1200,
+      webPreferences: { sandbox: true, offscreen: true },
+    });
+    const fail = (e) => { try { w.destroy(); } catch { /* */ } reject(e); };
+    w.webContents.once("did-finish-load", async () => {
+      try {
+        const h = await w.webContents.executeJavaScript("document.body.scrollHeight");
+        w.setSize(pxWidth, Math.min(Math.max(h + 8, 200), 6000));
+        await new Promise((r) => setTimeout(r, 250)); // 오프스크린 리페인트 대기
+        let img = await w.webContents.capturePage();
+        // 레티나 등 scaleFactor≠1 환경 정규화 — 도트폭과 1:1 로 강제
+        if (img.getSize().width !== pxWidth) img = img.resize({ width: pxWidth });
+        const { width, height } = img.getSize();
+        const bgra = img.toBitmap();
+        try { w.destroy(); } catch { /* */ }
+        resolve(bitmapToRaster(bgra, width, height));
+      } catch (e) { fail(e); }
+    });
+    w.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+    setTimeout(() => fail(new Error("래스터 렌더 시간 초과")), 20000);
+  });
+}
+
+/** BGRA → 1bpp 패킹(MSB 먼저, 1=검정). 감열 전표는 흑백 텍스트라 단순 휘도 임계값으로 충분. */
+function bitmapToRaster(bgra, width, height, threshold = 160) {
+  const rowBytes = Math.ceil(width / 8);
+  const data = Buffer.alloc(rowBytes * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4;
+      const lum = 0.114 * bgra[o] + 0.587 * bgra[o + 1] + 0.299 * bgra[o + 2];
+      if (lum < threshold) data[y * rowBytes + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return { widthDots: rowBytes * 8, height, rowBytes, data };
+}
+
+/** 설정에 따라 ESC/POS 전송 버퍼 생성 — raster(전 기종 호환, 기본) | text(한글 펌웨어 전용). */
+async function buildEscposBuffer(p, lines, cols) {
+  if (p.escposOutput === "text") return buildEscpos(lines, { cols });
+  const dots = dotsOf(p.widthMm);
+  const raster = await renderRasterBitmap(renderReceiptHtml(lines, p.widthMm, { pxWidth: dots }), dots);
+  return buildEscposRaster(raster);
+}
+
 // ── 진입점 ───────────────────────────────────────────────────
 const printedOnce = new Set(); // 자동 인쇄 중복 방지(세션 내) — 재인쇄는 통과
 
@@ -168,10 +222,10 @@ async function printOrder(payload, printer, opts = {}) {
   try {
     if (p.mode === "network") {
       if (!p.ip) return { ok: false, error: "프린터 IP가 설정되지 않았어요" };
-      await sendToNetwork(buildEscpos(lines, { cols }), p.ip, p.port);
+      await sendToNetwork(await buildEscposBuffer(p, lines, cols), p.ip, p.port);
     } else if (p.mode === "usbraw") {
       if (!p.osPrinterName) return { ok: false, error: "프린터(큐 이름)가 선택되지 않았어요" };
-      await sendToOsQueueRaw(buildEscpos(lines, { cols }), p.osPrinterName);
+      await sendToOsQueueRaw(await buildEscposBuffer(p, lines, cols), p.osPrinterName);
     } else if (p.mode === "system") {
       await printViaSystem(renderReceiptHtml(lines, p.widthMm), p.widthMm, p.osPrinterName);
     } else { // preview
@@ -190,4 +244,7 @@ async function printOrder(payload, printer, opts = {}) {
   }
 }
 
-module.exports = { printOrder, DEFAULT_PRINTER, colsOf, renderPreviewPng };
+module.exports = {
+  printOrder, DEFAULT_PRINTER, colsOf, dotsOf,
+  renderPreviewPng, renderRasterBitmap, bitmapToRaster, buildEscposBuffer,
+};
