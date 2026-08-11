@@ -1,6 +1,11 @@
 // 신규 주문 감시 — P-7 «신규 (N)» 탭 카운트를 2초마다 읽어 증가 시 알림.
 // 페이지 자체가 15초 폴링(router.refresh)으로 갱신되므로 서버 API 를 따로 때리지 않는다.
-const { ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
+
+// 주방프린터 브릿지 — 파트너 웹(print-client.tsx)이 수락 직후·재인쇄 시 호출한다.
+contextBridge.exposeInMainWorld("norderKitchen", {
+  printOrder: (payload) => ipcRenderer.invoke("norder:print-order", payload),
+});
 
 const POLL_MS = 2000;
 const CHIME_REPEATS = 3;

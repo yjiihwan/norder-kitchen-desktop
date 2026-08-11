@@ -6,6 +6,8 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const printing = require("./printing");
+const sampleOrder = require("./sample-order");
 
 const DEFAULT_SERVER = "https://norder-web-staging.up.railway.app";
 const START_PATH = "/partner/delivery";
@@ -14,10 +16,12 @@ const PARTITION = "persist:norder-kitchen";
 // ── 설정(userData/settings.json) ─────────────────────────────
 const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
 function loadSettings() {
+  const base = { autoLaunch: false, kiosk: false, serverUrl: DEFAULT_SERVER, printer: { ...printing.DEFAULT_PRINTER } };
   try {
-    return { autoLaunch: false, kiosk: false, serverUrl: DEFAULT_SERVER, ...JSON.parse(fs.readFileSync(settingsFile(), "utf8")) };
+    const saved = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    return { ...base, ...saved, printer: { ...base.printer, ...(saved.printer || {}) } };
   } catch {
-    return { autoLaunch: false, kiosk: false, serverUrl: DEFAULT_SERVER };
+    return base;
   }
 }
 function saveSettings(s) {
@@ -46,6 +50,8 @@ if (!gotLock) {
     global.__norderBlockerId = blockerId; // E2E 검증용 노출
     createWindow();
     buildMenu();
+    // E2E 검증용 — 실기 프린터 없이 설정창을 자동으로 띄운다(수동 실행에는 무영향)
+    if (process.env.NORDER_OPEN_PRINTER_SETTINGS === "1") openPrinterSettings();
   });
 }
 
@@ -107,6 +113,49 @@ ipcMain.on("norder:new-orders", (_e, { count }) => {
 });
 ipcMain.on("norder:alert-ack", () => { if (win) win.flashFrame(false); });
 
+// ── 주방프린터 인쇄 (preload 브릿지 → printing.js) ────────────
+// 호출 출처를 파트너 화면(staging 서버 origin)으로 제한 — 임의 페이지의 인쇄 남용 차단.
+ipcMain.handle("norder:print-order", async (e, payload) => {
+  try {
+    if (new URL(e.senderFrame.url).origin !== serverOrigin()) {
+      return { ok: false, error: "허용되지 않은 출처" };
+    }
+  } catch { return { ok: false, error: "허용되지 않은 출처" }; }
+  return printing.printOrder(payload, settings.printer);
+});
+
+// ── 프린터 설정 창 ───────────────────────────────────────────
+let psWin = null;
+function openPrinterSettings() {
+  if (psWin) { psWin.show(); psWin.focus(); return; }
+  psWin = new BrowserWindow({
+    width: 620, height: 760, parent: win ?? undefined, title: "프린터 설정",
+    backgroundColor: "#f7f7f9", minimizable: false, maximizable: false,
+    webPreferences: {
+      preload: path.join(__dirname, "printer-settings-preload.js"),
+      contextIsolation: true, nodeIntegration: false,
+    },
+  });
+  psWin.setMenuBarVisibility(false);
+  psWin.loadFile(path.join(__dirname, "printer-settings.html"));
+  psWin.on("closed", () => { psWin = null; });
+}
+
+ipcMain.handle("printer:get-state", async () => {
+  let osPrinters = [];
+  try { osPrinters = await (win ?? psWin).webContents.getPrintersAsync(); } catch { /* 프린터 없음 */ }
+  return { printer: settings.printer, osPrinters };
+});
+ipcMain.handle("printer:save", (_e, printer) => {
+  settings.printer = { ...printing.DEFAULT_PRINTER, ...printer };
+  saveSettings(settings);
+  return { ok: true };
+});
+ipcMain.handle("printer:test", (_e, printer) =>
+  printing.printOrder(sampleOrder(), { ...printing.DEFAULT_PRINTER, ...printer }, { force: true }));
+ipcMain.handle("printer:preview", (_e, printer) =>
+  printing.printOrder(sampleOrder(), { ...printing.DEFAULT_PRINTER, ...printer, mode: "preview" }, { force: true }));
+
 // ── 메뉴 ─────────────────────────────────────────────────────
 function buildMenu() {
   const template = [
@@ -152,6 +201,8 @@ function buildMenu() {
     {
       label: "설정",
       submenu: [
+        { label: "프린터 설정…", accelerator: "CmdOrCtrl+P", click: () => openPrinterSettings() },
+        { type: "separator" },
         {
           label: "윈도우 부팅 시 자동 실행", type: "checkbox", checked: settings.autoLaunch,
           click: (item) => {

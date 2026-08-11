@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>프린터 설정 — N오더 주방</title>
+<style>
+  :root { --rose: #FF0065; --line: #e6e6ea; --muted: #7a7a85; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "AppleSDGothicNeo", "Malgun Gothic", sans-serif;
+         background: #f7f7f9; color: #1c1c24; font-size: 14px; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .card h2 { font-size: 14px; margin: 0 0 10px; }
+  label.radio { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border-radius: 8px; cursor: pointer; }
+  label.radio:hover { background: #faf7f8; }
+  label.radio b { font-weight: 700; }
+  label.radio .desc { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .field-row { display: flex; gap: 8px; align-items: center; margin: 8px 0 0 26px; flex-wrap: wrap; }
+  input[type=text], input[type=number], select {
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; font-family: inherit; }
+  input[name=ip] { width: 160px; } input[name=port] { width: 90px; }
+  select { min-width: 240px; max-width: 100%; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: #fff; padding: 8px 14px; font-size: 14px; cursor: pointer; font-family: inherit; }
+  .seg button.on { background: var(--rose); color: #fff; font-weight: 700; }
+  .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .btns { display: flex; gap: 8px; margin-top: 4px; }
+  .btn { border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 10px 16px;
+         font-size: 14px; cursor: pointer; font-family: inherit; font-weight: 600; }
+  .btn:hover { background: #faf7f8; }
+  .btn--cta { background: var(--rose); border-color: var(--rose); color: #fff; }
+  .btn--cta:hover { background: #e00059; }
+  .msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+  .msg.ok { color: #0a7d33; } .msg.err { color: #c81e3c; }
+  .toggle { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🖨 프린터 설정</h1>
+  <p class="sub">배달 주문을 수락하면 이 설정으로 주문서가 자동 인쇄돼요.</p>
+
+  <div class="card">
+    <h2>연결 방식</h2>
+    <label class="radio"><input type="radio" name="mode" value="network">
+      <span><b>네트워크 프린터 (권장)</b> — ESC/POS 감열, IP:9100 직접 전송
+        <div class="desc">주방 감열 프린터를 유선랜/와이파이로 연결한 경우. 가장 빠르고 안정적이에요.</div>
+        <div class="field-row">
+          <input type="text" name="ip" placeholder="예: 192.168.0.50" data-testid="ps-ip">
+          <input type="number" name="port" value="9100" data-testid="ps-port">
+        </div>
+      </span></label>
+    <label class="radio"><input type="radio" name="mode" value="usbraw">
+      <span><b>USB 프린터</b> — 윈도우에 설치된 프린터 큐로 ESC/POS 직접 전송(RAW)
+        <div class="desc">USB 감열 프린터를 제조사 드라이버로 설치한 경우. 아래에서 프린터를 고르세요.</div>
+        <div class="field-row"><select name="usbPrinter" data-testid="ps-usb-printer"></select></div>
+      </span></label>
+    <label class="radio"><input type="radio" name="mode" value="system">
+      <span><b>일반 인쇄 (폴백)</b> — ESC/POS 미지원 프린터를 OS 드라이버로 인쇄
+        <div class="desc">감열 전용 명령이 안 먹는 프린터용. 이미지 방식이라 조금 느려요.</div>
+        <div class="field-row"><select name="sysPrinter" data-testid="ps-sys-printer"></select></div>
+      </span></label>
+    <label class="radio"><input type="radio" name="mode" value="preview">
+      <span><b>미리보기 (테스트)</b> — 인쇄 대신 전표 이미지를 화면에 띄움
+        <div class="desc">프린터 연결 전 레이아웃 확인용이에요.</div>
+      </span></label>
+    <label class="radio"><input type="radio" name="mode" value="off">
+      <span><b>끄기</b> — 자동 인쇄 안 함</span></label>
+  </div>
+
+  <div class="card row">
+    <h2 style="margin:0">용지 폭</h2>
+    <span class="seg" data-testid="ps-width">
+      <button type="button" data-w="80">80mm</button>
+      <button type="button" data-w="58">58mm</button>
+    </span>
+  </div>
+
+  <div class="card row">
+    <h2 style="margin:0">주문 수락 시 자동 인쇄</h2>
+    <label class="toggle"><input type="checkbox" name="autoPrint" data-testid="ps-auto"> 켜기</label>
+  </div>
+
+  <div class="btns">
+    <button class="btn btn--cta" id="save" data-testid="ps-save">저장</button>
+    <button class="btn" id="test" data-testid="ps-test">테스트 인쇄</button>
+    <button class="btn" id="preview" data-testid="ps-preview">미리보기</button>
+  </div>
+  <p class="msg" id="msg" data-testid="ps-msg"></p>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  let widthMm = 80;
+
+  function currentForm() {
+    return {
+      mode: document.querySelector('input[name=mode]:checked')?.value || "preview",
+      ip: $('input[name=ip]').value.trim(),
+      port: Number($('input[name=port]').value) || 9100,
+      osPrinterName:
+        (document.querySelector('input[name=mode]:checked')?.value === "system"
+          ? $('select[name=sysPrinter]').value
+          : $('select[name=usbPrinter]').value) || "",
+      widthMm,
+      autoPrint: $('input[name=autoPrint]').checked,
+    };
+  }
+
+  function setMsg(text, ok) {
+    const el = $('#msg');
+    el.textContent = text;
+    el.className = 'msg ' + (ok ? 'ok' : 'err');
+  }
+
+  function paintWidth() {
+    document.querySelectorAll('#msg, .seg [data-w]').forEach(() => {});
+    document.querySelectorAll('.seg [data-w]').forEach((b) =>
+      b.classList.toggle('on', Number(b.dataset.w) === widthMm));
+  }
+
+  window.norderPS.getState().then(({ printer, osPrinters }) => {
+    const opts = osPrinters.map((p) =>
+      `<option value="${p.name.replace(/"/g, '&quot;')}">${p.displayName || p.name}${p.isDefault ? " (기본)" : ""}</option>`);
+    const empty = '<option value="">프린터를 선택하세요</option>';
+    $('select[name=usbPrinter]').innerHTML = empty + opts.join('');
+    $('select[name=sysPrinter]').innerHTML = empty + opts.join('');
+    document.querySelector(`input[name=mode][value=${printer.mode}]`).checked = true;
+    $('input[name=ip]').value = printer.ip || '';
+    $('input[name=port]').value = printer.port || 9100;
+    if (printer.osPrinterName) {
+      $('select[name=usbPrinter]').value = printer.osPrinterName;
+      $('select[name=sysPrinter]').value = printer.osPrinterName;
+    }
+    widthMm = Number(printer.widthMm) === 58 ? 58 : 80;
+    $('input[name=autoPrint]').checked = printer.autoPrint !== false;
+    paintWidth();
+  });
+
+  document.querySelectorAll('.seg [data-w]').forEach((b) =>
+    b.addEventListener('click', () => { widthMm = Number(b.dataset.w); paintWidth(); }));
+
+  $('#save').addEventListener('click', async () => {
+    await window.norderPS.save(currentForm());
+    setMsg('저장됐어요. 이제 주문을 수락하면 이 설정으로 인쇄돼요.', true);
+  });
+  $('#test').addEventListener('click', async () => {
+    setMsg('테스트 전표를 보내는 중…', true);
+    const r = await window.norderPS.testPrint(currentForm());
+    setMsg(r.ok ? '테스트 전표를 보냈어요. 출력물을 확인해 주세요.' : (r.error || '실패했어요.'), r.ok);
+  });
+  $('#preview').addEventListener('click', async () => {
+    const r = await window.norderPS.preview(currentForm());
+    setMsg(r.ok ? '미리보기 이미지를 열었어요.' : (r.error || '실패했어요.'), r.ok);
+  });
+</script>
+</body>
+</html>
