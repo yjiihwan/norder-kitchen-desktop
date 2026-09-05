@@ -61,11 +61,16 @@ npm run verify:mac-sign -- --expect developer-id   # 2단계 게이트: spctl --
 ```
 항목: codesign -dvvv · hardened runtime 플래그 · entitlements(allow-jit 등) · `--verify --deep --strict` · 헬퍼 4종 hardened · universal(x86_64+arm64) · (developer-id) spctl 통과·stapler app/dmg.
 
-## 5. 강제 옵션
+## 5. 실패 규칙·부작용
+- **자격증명(CSC_LINK/CSC_NAME/identity 또는 키체인의 Developer ID)이 감지되면 서명은 필수** — 유효 identity를 못 찾으면 빌드가 «skipped macOS application code signing» 에러로 실패한다(무서명 앱이 조용히 나오는 것을 막음). 자격증명이 전혀 없을 때만 ad-hoc 폴백.
+- 공증 env 3종 중 일부만 있으면 electron-builder가 «APPLE_… env var needs to be set» 으로 실패한다. 전부 넣거나 전부 비울 것.
+- CSC_LINK 빌드는 electron-builder가 임시 키체인을 만들어 p12를 넣고 끝나면 삭제한다. 단 Apple 루트 인증서 캐시 키체인(`~/Library/Caches/electron-builder/electron-builder-root-certs.keychain`, 공개 루트 CA만 포함)이 키체인 검색 목록에 남는다 — electron-builder 표준 동작이며 무해.
+
+## 6. 강제 옵션
 - `npm run dist:mac:unsigned` — 인증서가 있어도 ad-hoc으로 빌드(`CSC_IDENTITY_AUTO_DISCOVERY=false`).
 - `mac.notarize=false`로 임시 오버라이드: `npx electron-builder --mac --universal -c.mac.notarize=false` (서명만).
 
-## 6. 2단계(자격증명 수령 후) 절차
+## 7. 2단계(자격증명 수령 후) 절차
 1. `electron-builder.env` 작성 → `npm run dist:mac` → `npm run verify:mac-sign -- --expect developer-id` PASS
 2. `package.json` 버전 범프 → `git tag v<ver>` → GitHub Release 재발행(dmg + exe)
 3. 다른 맥에서 dmg 다운로드 → 더블클릭 설치 → 경고 없이 실행되는지 육안 확인

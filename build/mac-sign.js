@@ -33,7 +33,9 @@ exports.default = async function macSignFallback(context) {
 
   const macConfig = context.packager.platformSpecificBuildOptions || {};
   if (realSigningExpected(macConfig)) {
-    console.log("  • [mac-sign] Developer ID 자격증명 감지 — electron-builder 내장 서명·공증에 위임 (ad-hoc 건너뜀)");
+    // 자격증명을 줬는데 유효 identity를 못 찾으면 무서명 앱이 조용히 나온다 — 그 경우 빌드를 실패시킨다(fail-fast).
+    macConfig.forceCodeSigning = true;
+    console.log("  • [mac-sign] Developer ID 자격증명 감지 — electron-builder 내장 서명·공증에 위임 (ad-hoc 건너뜀, forceCodeSigning=on)");
     return;
   }
 
