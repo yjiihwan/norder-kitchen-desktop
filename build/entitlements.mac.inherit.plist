@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Electron(V8 JIT)이 Hardened Runtime 아래서 돌기 위한 최소 예외 — https://www.electronjs.org/docs/latest/tutorial/code-signing -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- 팀 서명이 다른 dylib(향후 네이티브 모듈) 로드를 허용. 현재 네이티브 모듈 없음이지만 Electron 프레임워크 로드 안정성용 -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

@@ -13,6 +13,10 @@ N오더 식당(점주·주방)용 주문 접수 데스크톱 앱. **staging 전�
 npm install
 npm start           # 로컬 실행
 npm run dist:win    # 윈도우 NSIS 설치파일 (dist/NOrder-Kitchen-Setup-*.exe)
+npm run dist:mac    # macOS dmg (universal). 서명·공증 자격증명은 electron-builder.env — SIGNING.md 참고
+npm run verify:mac-sign   # 맥 빌드 서명 상태 게이트
 ```
+
+macOS 서명·공증(Developer ID + notarization) 설정과 필요한 자격증명 목록은 [SIGNING.md](SIGNING.md).
 
 로그인: staging 시드 파트너 계정 (`hansang@norder.test` / `partner1234!`)

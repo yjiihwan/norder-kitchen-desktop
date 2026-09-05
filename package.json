@@ -8,7 +8,9 @@
   "scripts": {
     "start": "electron .",
     "dist:win": "electron-builder --win --x64",
-    "dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --universal -c.productName='NOrder Kitchen' '-c.mac.extendInfo.CFBundleDisplayName=N오더 주방'"
+    "dist:mac": "electron-builder --mac --universal -c.productName='NOrder Kitchen' '-c.mac.extendInfo.CFBundleDisplayName=N오더 주방'",
+    "dist:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac",
+    "verify:mac-sign": "node build/verify-mac-sign.js"
   },
   "devDependencies": {
     "electron": "^38.2.0",
@@ -17,7 +19,8 @@
   "build": {
     "appId": "kr.co.ngym.norder.kitchen",
     "productName": "N오더 주방",
-    "afterPack": "build/adhoc-sign.js",
+    "afterPack": "build/mac-sign.js",
+    "afterAllArtifactBuild": "build/mac-notarize-dmg.js",
     "directories": {
       "output": "dist"
     },
@@ -49,7 +52,12 @@
       ],
       "artifactName": "NOrder-Kitchen-${version}-${arch}.dmg",
       "icon": "build/icon.png",
-      "category": "public.app-category.business"
+      "category": "public.app-category.business",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "notarize": true
     },
     "dmg": {
       "writeUpdateInfo": false

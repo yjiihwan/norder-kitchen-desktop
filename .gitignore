@@ -1,3 +1,11 @@
 node_modules/
 dist/
 preview_out/
+# 서명·공증 자격증명 — 절대 커밋 금지
+electron-builder.env
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.cer
