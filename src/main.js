@@ -11,6 +11,9 @@ const { loadSettingsFile, saveSettingsFile } = require("./settings");
 
 const DEFAULT_SERVER = "https://norder-web-staging.up.railway.app";
 const START_PATH = "/partner/delivery";
+// 일시정지 조작부는 「전체 센터」 뷰(inst 필터 없음)에 있다 — 센터 탭에 머물러 있으면
+// 전체 일괄 멈춤/재개가 안 보이므로 inst 를 떼고 들어간다.
+const PAUSE_PATH = "/partner/delivery?tab=new";
 const PARTITION = "persist:norder-kitchen";
 
 // ── 설정(userData/settings.json) ─────────────────────────────
@@ -152,12 +155,27 @@ ipcMain.handle("printer:preview", (_e, printer) =>
   printing.printOrder(sampleOrder(), { ...printing.DEFAULT_PRINTER, ...printer, mode: "preview" }, { force: true }));
 
 // ── 메뉴 ─────────────────────────────────────────────────────
+/**
+ * 주문을 보다가 한 번에 일시정지 조작부로. 경로는 /partner 로 시작하므로 allowed() 를 통과한다.
+ * ⛔ 신규 주문 감시·알림음·전면 팝업·자동 인쇄에는 손대지 않는다 — 단순 이동일 뿐이다.
+ */
+function gotoPause() {
+  if (!win) return;
+  win.loadURL(settings.serverUrl + PAUSE_PATH);
+  win.webContents.once("did-finish-load", () => {
+    win?.webContents.executeJavaScript(
+      'document.querySelector(\'[data-testid="pn-dlv-status-banner"]\')?.scrollIntoView({ block: "start" });',
+    ).catch(() => {});
+  });
+}
+
 function buildMenu() {
   const template = [
     {
       label: "앱",
       submenu: [
         { label: "주문판으로 이동", accelerator: "CmdOrCtrl+H", click: () => win?.loadURL(settings.serverUrl + START_PATH) },
+        { label: "배달 일시정지 화면으로 이동", accelerator: "CmdOrCtrl+Shift+P", click: () => gotoPause() },
         { label: "새로고침", accelerator: "CmdOrCtrl+R", click: () => win?.webContents.reload() },
         { type: "separator" },
         {
