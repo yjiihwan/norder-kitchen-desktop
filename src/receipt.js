@@ -94,10 +94,12 @@ function buildReceiptLines(payload, cols) {
   if (eta) kvLines("도착예정", eta, { bold: true });
   hr();
 
-  // 메뉴 — 이름 줄 + «수량 x 단가 / 줄 금액» 줄 (옵션 개념은 데이터 모델에 없음)
+  // 메뉴 — 이름 줄 + 옵션 줄(«└ 사이즈 · 2XL (+2,000원)» · 서버가 문장까지 만들어 준다 · 없으면 생략)
+  //        + «수량 x 단가 / 줄 금액» 줄. 단가는 이미 옵션 추가금 포함(N오더 0050).
   text("메뉴", { bold: true });
   for (const it of payload.items || []) {
     for (const l of wrap(it.name, cols)) text(l, { bold: true });
+    for (const o of it.options || []) for (const l of wrap(`  └ ${o}`, cols)) text(l);
     kvLines(`  ${it.qty} x ${won(it.unitPriceKrw)}`, won(it.lineAmountKrw));
   }
   if (!payload.items || payload.items.length === 0) text("(품목 정보 없음)");
