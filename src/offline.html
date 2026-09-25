@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>N오더 주방 — 연결 안내</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #f7f7f9; color: #1a1a24;
+               font-family: -apple-system, "AppleSDGothicNeo", "Malgun Gothic", sans-serif; }
+  .wrap { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+  .card { background: #fff; border-radius: 20px; padding: 44px 52px; max-width: 620px; text-align: center;
+          box-shadow: 0 8px 32px rgba(0,0,0,.08); word-break: keep-all; }
+  .icon { font-size: 56px; line-height: 1; }
+  h1 { font-size: 28px; margin: 16px 0 10px; }
+  p { font-size: 17px; line-height: 1.55; margin: 6px 0; color: #4a4a58; }
+  .warn { margin-top: 18px; padding: 12px 16px; border-radius: 12px; background: #fff0f5; color: #c81e3c; font-weight: 700; font-size: 16px; }
+  .btn { margin-top: 24px; font-size: 18px; font-weight: 700; padding: 14px 36px; border: 0; border-radius: 12px;
+         background: #FF0065; color: #fff; cursor: pointer; }
+  .count { margin-top: 12px; font-size: 14px; color: #7a7a88; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" data-testid="offline-card">
+    <div class="icon" id="icon">📡</div>
+    <h1 id="title">서버에 연결할 수 없어요</h1>
+    <p id="body">인터넷 연결을 확인해 주세요.</p>
+    <div class="warn">연결될 때까지 새 주문 알림과 자동 인쇄가 멈춰요.</div>
+    <button class="btn" id="retry" data-testid="offline-retry">지금 다시 연결</button>
+    <div class="count" id="count" data-testid="offline-countdown"></div>
+  </div>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const kind = q.get("kind") || "network";
+  const target = q.get("url") || "";
+  const COPY = {
+    network: { icon: "📡", title: "서버에 연결할 수 없어요", body: "인터넷 연결을 확인해 주세요. 연결되면 자동으로 주문판을 다시 불러와요.", wait: 30 },
+    server: { icon: "🛠", title: "서버에 잠시 문제가 있어요", body: "N오더 서버가 응답하지 않아요. 잠시 뒤 자동으로 다시 연결해요.", wait: 30 },
+    crash: { icon: "🔄", title: "화면에 문제가 생겨 다시 불러와요", body: "앱 화면이 멈춰서 주문판을 다시 불러오는 중이에요.", wait: 5 },
+  };
+  const c = COPY[kind] || COPY.network;
+  document.getElementById("icon").textContent = c.icon;
+  document.getElementById("title").textContent = c.title;
+  document.getElementById("body").textContent = c.body;
+  // 우리 서버 주소만 받는다(파일 주소에 임의 URL 을 실어 보내는 것 차단)
+  const go = () => { if (/^https:\/\//.test(target) || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(target)) location.href = target; };
+  document.getElementById("retry").addEventListener("click", go);
+  let left = c.wait;
+  const tick = () => {
+    document.getElementById("count").textContent = `${left}초 뒤 자동으로 다시 연결해요`;
+    if (left-- <= 0) go(); else setTimeout(tick, 1000);
+  };
+  tick();
+  window.addEventListener("online", go);
+</script>
+</body>
+</html>

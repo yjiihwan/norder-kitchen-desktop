@@ -95,12 +95,16 @@ function buildReceiptLines(payload, cols) {
   hr();
 
   // 메뉴 — 이름 줄 + 옵션 줄(«└ 사이즈 · 2XL (+2,000원)» · 서버가 문장까지 만들어 준다 · 없으면 생략)
-  //        + «수량 x 단가 / 줄 금액» 줄. 단가는 이미 옵션 추가금 포함(N오더 0050).
+  //        + «수량 × 단가 / 줄 금액» 줄. 단가는 이미 옵션 추가금 포함(N오더 0050).
   text("메뉴", { bold: true });
   for (const it of payload.items || []) {
     for (const l of wrap(it.name, cols)) text(l, { bold: true });
-    for (const o of it.options || []) for (const l of wrap(`  └ ${o}`, cols)) text(l);
-    kvLines(`  ${it.qty} x ${won(it.unitPriceKrw)}`, won(it.lineAmountKrw));
+    // wrap() 은 앞 공백을 버린다 — 옵션 본문만 접고 들여쓰기는 줄마다 붙인다(이어지는 줄도 옵션 칸에 맞춤)
+    const optIndent = "  └ ", optCont = " ".repeat(dw(optIndent));
+    for (const o of it.options || []) {
+      wrap(o, cols - dw(optIndent)).forEach((l, i) => text(`${i ? optCont : optIndent}${l}`));
+    }
+    kvLines(`  ${it.qty} × ${won(it.unitPriceKrw)}`, won(it.lineAmountKrw));
   }
   if (!payload.items || payload.items.length === 0) text("(품목 정보 없음)");
   hr();
@@ -163,8 +167,9 @@ function renderReceiptHtml(lines, widthMm, opts = {}) {
     .paper { padding: ${px(padV)} ${px(padH)}; font-family: "AppleSDGothicNeo", "Malgun Gothic", monospace;
              font-size: ${px(widthMm >= 80 ? 12 : 11)}; line-height: 1.45; color: #000; }
     .ln { white-space: pre-wrap; word-break: break-all; }
-    .kv { display: flex; justify-content: space-between; gap: ${px(8)}; }
-    .kv span:last-child { white-space: nowrap; }
+    .kv { display: flex; flex-wrap: wrap; justify-content: space-between; column-gap: ${px(8)}; }
+    .kv span { white-space: pre; } /* 줄바꿈 없이 앞 공백(수량 줄 들여쓰기) 유지 */
+    .kv span:last-child { margin-left: auto; } /* 칸 계산보다 글꼴이 넓어 넘치면 값만 다음 줄 오른쪽으로 */
     .c { text-align: center; } .r { text-align: right; } .b { font-weight: 700; }
     .x2 { font-size: ${px(widthMm >= 80 ? 22 : 18)}; font-weight: 700; }
     .hr { border-top: ${Math.max(1, Math.round(k))}px dashed #000; margin: ${px(4)} 0; }

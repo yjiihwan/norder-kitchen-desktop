@@ -58,12 +58,12 @@
         <div class="field-row"><select name="usbPrinter" data-testid="ps-usb-printer"></select></div>
       </span></label>
     <label class="radio"><input type="radio" name="mode" value="system">
-      <span><b>일반 인쇄 (폴백)</b> — ESC/POS 미지원 프린터를 OS 드라이버로 인쇄
-        <div class="desc">감열 전용 명령이 안 먹는 프린터용. 이미지 방식이라 조금 느려요.</div>
+      <span><b>일반 인쇄 (다른 방식이 안 될 때)</b> — ESC/POS 미지원 프린터를 OS 드라이버로 인쇄
+        <div class="desc">감열 전용 명령을 지원하지 않는 프린터용. 이미지 방식이라 조금 느려요.</div>
         <div class="field-row"><select name="sysPrinter" data-testid="ps-sys-printer"></select></div>
       </span></label>
     <label class="radio"><input type="radio" name="mode" value="preview">
-      <span><b>미리보기 (테스트)</b> — 인쇄 대신 전표 이미지를 화면에 띄움
+      <span><b>미리보기 (테스트)</b> — 인쇄 대신 주문서 이미지를 화면에 띄움
         <div class="desc">프린터 연결 전 레이아웃 확인용이에요.</div>
       </span></label>
     <label class="radio"><input type="radio" name="mode" value="off">
@@ -74,11 +74,11 @@
     <h2>인쇄 방식 <span style="font-weight:400;color:var(--muted)">(네트워크·USB 공통)</span></h2>
     <label class="radio"><input type="radio" name="escposOutput" value="raster" data-testid="ps-out-raster">
       <span><b>이미지 인쇄 (기본 — 모든 기종 호환)</b>
-        <div class="desc">전표를 이미지로 변환해 보내요. 프린터의 한글 지원 여부·제조사와 관계없이 어떤 ESC/POS 감열 프린터든 똑같이 나와요. 기종을 모르면 이걸 쓰세요.</div>
+        <div class="desc">주문서를 이미지로 변환해 보내요. 프린터의 한글 지원 여부·제조사와 관계없이 어떤 ESC/POS 감열 프린터든 똑같이 나와요. 기종을 모르면 이걸 쓰세요.</div>
       </span></label>
     <label class="radio"><input type="radio" name="escposOutput" value="text" data-testid="ps-out-text">
       <span><b>텍스트 인쇄 (한글 지원 기종 전용 — 빠름)</b>
-        <div class="desc">한글(CP949)을 프린터에 직접 보내요. 한글 펌웨어 내장 기종(국산 등)에서만 정상이에요. 한글이 깨져 나오면 «이미지 인쇄»로 바꾸세요.</div>
+        <div class="desc">한글(CP949)을 프린터에 직접 보내요. 한글 펌웨어 내장 기종(국산 등)에서만 정상이에요. 한글이 깨져 나오면 «이미지 인쇄»로 바꾸세요. 꺾쇠 따옴표·악센트 글자는 비슷한 글자로 바꾸고, 이모지는 빼고 인쇄해요.</div>
       </span></label>
   </div>
 
@@ -121,6 +121,7 @@
 
 <script>
   const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   let widthMm = 80;
   let copies = 1;
 
@@ -158,7 +159,7 @@
 
   window.norderPS.getState().then(({ printer, osPrinters }) => {
     const opts = osPrinters.map((p) =>
-      `<option value="${p.name.replace(/"/g, '&quot;')}">${p.displayName || p.name}${p.isDefault ? " (기본)" : ""}</option>`);
+      `<option value="${esc(p.name)}">${esc(p.displayName || p.name)}${p.isDefault ? " (기본)" : ""}</option>`);
     const empty = '<option value="">프린터를 선택하세요</option>';
     $('select[name=usbPrinter]').innerHTML = empty + opts.join('');
     $('select[name=sysPrinter]').innerHTML = empty + opts.join('');
@@ -184,13 +185,18 @@
     b.addEventListener('click', () => { copies = Number(b.dataset.c); paintCopies(); }));
 
   $('#save').addEventListener('click', async () => {
-    await window.norderPS.save(currentForm());
-    setMsg('저장됐어요. 이제 주문을 수락하면 이 설정으로 인쇄돼요.', true);
+    const f = currentForm();
+    await window.norderPS.save(f);
+    setMsg(f.mode === 'off' || !f.autoPrint
+      ? '저장됐어요. 자동 인쇄는 꺼져 있어요.'
+      : '저장됐어요. 이제 주문을 수락하면 이 설정으로 인쇄돼요.', true);
   });
   $('#test').addEventListener('click', async () => {
-    setMsg('테스트 전표를 보내는 중…', true);
-    const r = await window.norderPS.testPrint(currentForm());
-    setMsg(r.ok ? '테스트 전표를 보냈어요. 출력물을 확인해 주세요.' : (r.error || '실패했어요.'), r.ok);
+    const f = currentForm();
+    setMsg('테스트 주문서를 보내는 중…', true);
+    const r = await window.norderPS.testPrint(f);
+    const done = f.mode === 'preview' ? '미리보기 이미지를 열었어요.' : '테스트 주문서를 보냈어요. 출력물을 확인해 주세요.';
+    setMsg(r.ok ? done : (r.error || '실패했어요.'), r.ok);
   });
   $('#preview').addEventListener('click', async () => {
     const r = await window.norderPS.preview(currentForm());

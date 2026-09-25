@@ -5,6 +5,34 @@ const { kvText } = require("./receipt");
 
 const ESC = 0x1b, GS = 0x1d, FS = 0x1c, LF = 0x0a;
 
+// CP949 에 없는 글자는 iconv 가 «?» 로 바꿔 전표가 «?시그니처?» 처럼 찍힌다 — 비슷한 글자로 미리 바꾼다.
+const CP949_SUBST = {
+  "«": '"', "»": '"', "‹": "'", "›": "'", "„": '"', "‟": '"', "″": '"',
+  "‚": "'", "‛": "'", "′": "'", "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-",
+  "\u00a0": " ", "\u2007": " ", "\u202f": " ", "•": "·", "‧": "·", "∙": "·",
+};
+const EMOJI_PART = /[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{1F1E6}-\u{1F1FF}\u200d\ufe0e\ufe0f\u20e3]/u;
+const cp949Ok = (ch) => iconv.decode(iconv.encode(ch, "cp949"), "cp949") === ch;
+
+/** 텍스트(CP949) 인쇄용 — 없는 글자는 비슷한 글자로, 이모지는 뺀다. 칸 폭은 늘지 않는다(2칸→1칸·0칸). */
+function toCp949Safe(str) {
+  const chars = Array.from(String(str ?? ""));
+  let out = "";
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (ch.codePointAt(0) <= 0x7f || cp949Ok(ch)) { out += ch; continue; }
+    if (CP949_SUBST[ch] != null) { out += CP949_SUBST[ch]; continue; }
+    if (EMOJI_PART.test(ch)) {
+      if (out.endsWith(" ") && chars[i + 1] === " ") i++; // «소스 · 🌶️ 핫칠리» → 공백 한 칸만
+      continue;
+    }
+    // é·ö 등 — 한 글자만 분해(한글 음절 전체 NFD 금지)해 받침 기호를 떼어 본다
+    const base = ch.normalize("NFD").replace(/\p{M}/gu, "");
+    out += base && Array.from(base).every((c) => c.codePointAt(0) <= 0x7f || cp949Ok(c)) ? base : "?";
+  }
+  return out;
+}
+
 function buildEscpos(lines, opts = {}) {
   const cols = opts.cols || 48; // 80mm=48, 58mm=32
   const chunks = [];
@@ -28,7 +56,9 @@ function buildEscpos(lines, opts = {}) {
     push(ESC, 0x61, l.align === "center" ? 0x01 : l.align === "right" ? 0x02 : 0x00);
     push(ESC, 0x45, l.bold ? 0x01 : 0x00);
     push(GS, 0x21, l.size === 2 ? 0x11 : 0x00); // 가로·세로 2배 | 기본
-    const raw = l.kvLeft != null ? kvText(l, cols) : String(l.text ?? "");
+    const raw = l.kvLeft != null
+      ? kvText({ ...l, kvLeft: toCp949Safe(l.kvLeft), kvRight: toCp949Safe(l.kvRight) }, cols)
+      : toCp949Safe(l.text);
     chunks.push(iconv.encode(raw, "cp949"));
     push(LF);
   }
@@ -146,4 +176,4 @@ function emulateRaster(buf) {
   };
 }
 
-module.exports = { buildEscpos, emulate, buildEscposRaster, emulateRaster, RASTER_BAND_ROWS };
+module.exports = { buildEscpos, toCp949Safe, emulate, buildEscposRaster, emulateRaster, RASTER_BAND_ROWS };

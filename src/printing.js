@@ -25,14 +25,24 @@ const colsOf = (widthMm) => (Number(widthMm) === 58 ? 32 : 48);
 const copiesOf = (p) => Math.min(5, Math.max(1, Math.trunc(Number(p.copies) || 1)));
 const dotsOf = (widthMm) => (Number(widthMm) === 58 ? 384 : 576); // 203dpi 인쇄 도트폭
 
+// 소켓 오류 원문(«connect ECONNREFUSED …»)은 주방에서 읽기 어렵다 — 흔한 원인은 우리말로.
+function netErrorText(e, ip, port) {
+  const at = `(${ip}:${port})`;
+  if (["ECONNREFUSED", "EHOSTUNREACH", "EHOSTDOWN", "ENETUNREACH", "ETIMEDOUT"].includes(e.code)) {
+    return `프린터에 연결할 수 없어요 ${at}. 프린터가 꺼져 있거나 IP 주소가 달라요.`;
+  }
+  if (e.code === "ENOTFOUND" || e.code === "EINVAL") return `프린터 IP 주소가 올바르지 않아요 ${at}.`;
+  return `프린터 연결 실패 ${at} — ${e.message}`;
+}
+
 // ── 네트워크 ESC/POS (IP:9100) ───────────────────────────────
 function sendToNetwork(buf, ip, port) {
   return new Promise((resolve, reject) => {
     const sock = net.createConnection({ host: ip, port: Number(port) || 9100, timeout: 5000 });
     sock.on("connect", () => sock.end(buf));
     sock.on("close", () => resolve());
-    sock.on("timeout", () => { sock.destroy(); reject(new Error(`프린터 연결 시간 초과 (${ip}:${port})`)); });
-    sock.on("error", (e) => reject(new Error(`프린터 연결 실패 (${ip}:${port}) — ${e.message}`)));
+    sock.on("timeout", () => { sock.destroy(); reject(new Error(`프린터가 응답하지 않아요 (${ip}:${port}). 프린터 전원과 IP 주소를 확인해 주세요.`)); });
+    sock.on("error", (e) => reject(new Error(netErrorText(e, ip, port))));
   });
 }
 
@@ -130,6 +140,14 @@ function printViaSystem(html, widthMm, deviceName) {
   });
 }
 
+// 렌더 창 높이 상한 — 넘으면 결제금액·배달 목적지가 조용히 잘리므로 인쇄 대신 오류로 알린다.
+// (80mm 래스터 기준 약 450줄. 래스터 전송은 RASTER_BAND_ROWS 로 나눠 보내 길이 제한 없음)
+const MAX_RENDER_PX = 16000;
+function fitRenderHeight(h) {
+  if (h + 8 > MAX_RENDER_PX) throw new Error("주문서가 너무 길어 인쇄할 수 없어요. 웹 화면에서 주문 내용을 확인해 주세요.");
+  return Math.max(h + 8, 200);
+}
+
 // ── 미리보기 (실물 없이 검증 — PNG 렌더 후 열기) ──────────────
 function renderPreviewPng(html, widthMm, outPath) {
   return new Promise((resolve, reject) => {
@@ -142,7 +160,7 @@ function renderPreviewPng(html, widthMm, outPath) {
     w.webContents.once("did-finish-load", async () => {
       try {
         const h = await w.webContents.executeJavaScript("document.body.scrollHeight");
-        w.setSize(pxWidth, Math.min(Math.max(h + 8, 200), 6000));
+        w.setSize(pxWidth, fitRenderHeight(h));
         await new Promise((r) => setTimeout(r, 250)); // 오프스크린 리페인트 대기
         const img = await w.webContents.capturePage();
         fs.writeFileSync(outPath, img.toPNG());
@@ -167,7 +185,7 @@ function renderRasterBitmap(html, pxWidth) {
     w.webContents.once("did-finish-load", async () => {
       try {
         const h = await w.webContents.executeJavaScript("document.body.scrollHeight");
-        w.setSize(pxWidth, Math.min(Math.max(h + 8, 200), 6000));
+        w.setSize(pxWidth, fitRenderHeight(h));
         await new Promise((r) => setTimeout(r, 250)); // 오프스크린 리페인트 대기
         let img = await w.webContents.capturePage();
         // 레티나 등 scaleFactor≠1 환경 정규화 — 도트폭과 1:1 로 강제
@@ -212,7 +230,7 @@ async function printOrder(payload, printer, opts = {}) {
   const p = { ...DEFAULT_PRINTER, ...printer };
   if (p.mode === "off") return { ok: false, error: "인쇄가 꺼져 있어요 (설정 > 프린터 설정)" };
   if (!payload || payload.kind !== "norder-delivery-receipt") {
-    return { ok: false, error: "전표 데이터 형식이 올바르지 않아요" };
+    return { ok: false, error: "주문서 데이터 형식이 올바르지 않아요" };
   }
   if (!payload.reprint && payload.orderId && printedOnce.has(payload.orderId)) {
     return { ok: true, skipped: "duplicate" };

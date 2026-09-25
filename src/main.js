@@ -15,11 +15,13 @@ const START_PATH = "/partner/delivery";
 // 전체 일괄 멈춤/재개가 안 보이므로 inst 를 떼고 들어간다.
 const PAUSE_PATH = "/partner/delivery?tab=new";
 const PARTITION = "persist:norder-kitchen";
+const OFFLINE_FILE = path.join(__dirname, "offline.html");
 
 // ── 설정(userData/settings.json) ─────────────────────────────
 const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
 function loadSettings() {
-  const base = { autoLaunch: false, kiosk: false, serverUrl: DEFAULT_SERVER, printer: { ...printing.DEFAULT_PRINTER } };
+  // expectLogin: 로그인해 쓰던 기기인지 — 로그인 화면으로 떨어졌을 때 «로그인 풀림» 경보를 낼지 판단(처음 설치·직접 로그아웃은 조용히)
+  const base = { autoLaunch: false, kiosk: false, expectLogin: false, serverUrl: DEFAULT_SERVER, printer: { ...printing.DEFAULT_PRINTER } };
   return loadSettingsFile(settingsFile(), base);
 }
 function saveSettings(s) {
@@ -57,6 +59,36 @@ function serverOrigin() {
   return new URL(settings.serverUrl).origin;
 }
 
+function isOfflinePage(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    return u.protocol === "file:" && path.normalize(decodeURIComponent(u.pathname)) === path.normalize(OFFLINE_FILE);
+  } catch { return false; }
+}
+
+let outage = false;
+function showOffline(kind, failedUrl) {
+  if (!win) return;
+  let retry = settings.serverUrl + START_PATH;
+  // 서버 오류(5xx)는 그 화면만의 문제일 수 있어 주문판으로 되돌아간다(같은 화면 재시도 무한 반복 방지)
+  if (kind !== "server") try { const u = new URL(failedUrl); if (u.origin === serverOrigin() && u.pathname.startsWith("/partner")) retry = u.href; } catch { /* */ }
+  win.loadFile(OFFLINE_FILE, { query: { kind, url: retry } }).catch(() => {});
+  if (!outage) { // 끊길 때 한 번만 OS 알림 — 주방이 화면을 안 보고 있어도 알 수 있게
+    outage = true;
+    new Notification({
+      title: kind === "crash" ? "N오더 · 화면 다시 불러오는 중" : "N오더 · 서버 연결 끊김",
+      body: "연결될 때까지 새 주문 알림과 자동 인쇄가 멈춰요. 인터넷 연결을 확인해 주세요.",
+      urgency: "critical",
+    }).show();
+  }
+}
+
+function setAttention(on) {
+  if (!win) return;
+  win.flashFrame(on);
+  if (process.platform === "darwin") app.dock?.setBadge(on ? "!" : "");
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -87,11 +119,27 @@ function createWindow() {
   });
   // Next.js Link 는 SPA 내비게이션이라 will-navigate 가 안 뜬다 — 사후 감지 후 즉시 복귀
   const bounce = (url) => {
-    if (!allowed(url)) win.webContents.loadURL(settings.serverUrl + START_PATH);
+    if (!allowed(url) && !isOfflinePage(url)) win.webContents.loadURL(settings.serverUrl + START_PATH);
   };
   win.webContents.on("did-navigate-in-page", (_e, url, isMainFrame) => { if (isMainFrame) bounce(url); });
-  win.webContents.on("did-navigate", (_e, url) => bounce(url));
+  win.webContents.on("did-navigate", (_e, url, httpCode) => {
+    if (httpCode >= 500 && allowed(url)) { showOffline("server", url); return; }
+    bounce(url);
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  // 오프라인·서버 오류·렌더러 충돌 — 흰 빈 창 대신 안내 화면 + 자동 재시도(offline.html)
+  win.webContents.on("did-fail-load", (_e, code, _desc, url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 = ERR_ABORTED(다른 이동으로 취소) — 오류 아님
+    showOffline("network", url);
+  });
+  win.webContents.on("render-process-gone", (_e, details) => {
+    if (details.reason === "clean-exit") return;
+    showOffline("crash", settings.serverUrl + START_PATH);
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (win && allowed(win.webContents.getURL())) outage = false;
+  });
 
   win.on("closed", () => { win = null; });
   win.loadURL(settings.serverUrl + START_PATH);
@@ -110,6 +158,24 @@ ipcMain.on("norder:new-orders", (_e, { count }) => {
   win.show();
 });
 ipcMain.on("norder:alert-ack", () => { if (win) win.flashFrame(false); });
+
+// ── 로그인 풀림(세션 12시간 만료 등) — preload 가 로그인 화면을 감지하면 1분마다 호출 ──
+ipcMain.handle("norder:logged-out", () => {
+  if (!win || !settings.expectLogin) return { alert: false };
+  new Notification({
+    title: "N오더 · 다시 로그인해 주세요",
+    body: "주방 앱 로그인이 풀려 새 주문을 받을 수 없어요. 다시 로그인해야 주문 알림과 자동 인쇄가 동작해요.",
+    urgency: "critical",
+  }).show();
+  setAttention(true);
+  if (win.isMinimized()) win.restore();
+  win.show();
+  return { alert: true };
+});
+ipcMain.on("norder:logged-in", () => {
+  setAttention(false);
+  if (!settings.expectLogin) { settings.expectLogin = true; saveSettings(settings); }
+});
 
 // ── 주방프린터 인쇄 (preload 브릿지 → printing.js) ────────────
 // 호출 출처를 파트너 화면(staging 서버 origin)으로 제한 — 임의 페이지의 인쇄 남용 차단.
@@ -186,6 +252,9 @@ function buildMenu() {
               message: "로그아웃하고 로그인 화면으로 이동합니다.",
             });
             if (r.response !== 0) return;
+            settings.expectLogin = false; // 직접 로그아웃 — 로그인 풀림 경보 끔
+            saveSettings(settings);
+            setAttention(false);
             await session.fromPartition(PARTITION).clearStorageData();
             win?.loadURL(settings.serverUrl + "/partner/login");
           },
@@ -194,6 +263,8 @@ function buildMenu() {
         { role: "quit", label: "종료" },
       ],
     },
+    // 맥은 «편집» 메뉴가 있어야 입력칸에서 Cmd+C/V/X/A/Z 가 동작한다(윈도우는 영향 없음)
+    { role: "editMenu", label: "편집" },
     {
       label: "화면",
       submenu: [
@@ -217,7 +288,7 @@ function buildMenu() {
         { label: "프린터 설정…", accelerator: "CmdOrCtrl+P", click: () => openPrinterSettings() },
         { type: "separator" },
         {
-          label: "윈도우 부팅 시 자동 실행", type: "checkbox", checked: settings.autoLaunch,
+          label: "컴퓨터를 켜면 자동 실행", type: "checkbox", checked: settings.autoLaunch,
           click: (item) => {
             settings.autoLaunch = item.checked;
             saveSettings(settings);

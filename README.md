@@ -19,4 +19,4 @@ npm run verify:mac-sign   # 맥 빌드 서명 상태 게이트
 
 macOS 서명·공증(Developer ID + notarization) 설정과 필요한 자격증명 목록은 [SIGNING.md](SIGNING.md).
 
-로그인: staging 시드 파트너 계정 (`hansang@norder.test` / `partner1234!`)
+로그인: staging 시드 식당 계정 — 아이디는 휴대폰 번호 (`010-5555-0101` / `partner1234!`)
