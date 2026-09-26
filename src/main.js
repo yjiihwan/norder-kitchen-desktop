@@ -32,6 +32,9 @@ let settings;
 let win = null;
 let blockerId = null;
 
+// 검증용 — 설정·쿠키를 임시 폴더에 두고 띄운다(수동 실행에는 무영향)
+if (process.env.NORDER_USER_DATA) app.setPath("userData", process.env.NORDER_USER_DATA);
+
 // 주방 태블릿 대체 환경 — 알림음은 제스처 없이 즉시 재생돼야 한다.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
@@ -46,6 +49,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     app.setAppUserModelId("kr.co.ngym.norder.kitchen"); // Windows 알림 표기 필수
     settings = loadSettings();
+    markKitchenAppRequests();
     blockerId = powerSaveBlocker.start("prevent-display-sleep");
     global.__norderBlockerId = blockerId; // E2E 검증용 노출
     createWindow();
@@ -81,6 +85,27 @@ function showOffline(kind, failedUrl) {
       urgency: "critical",
     }).show();
   }
+}
+
+/**
+ * 운영 결정 #9 — 서버 요청에 «주방 앱» 표시 헤더를 붙인다. 서버는 **로그인할 때만** 이 헤더를 보고
+ * 서명된 세션에 client=kitchen_app 을 싣고, 그 세션만 쓰는 동안(대기열 5초 조회) 만료를 민다.
+ * 서버 origin 요청에만 붙인다(외부 도메인에 새지 않게).
+ */
+function markKitchenAppRequests() {
+  const ses = session.fromPartition(PARTITION);
+  ses.webRequest.onBeforeSendHeaders((details, cb) => {
+    let mine = false;
+    try { mine = new URL(details.url).origin === serverOrigin(); } catch { /* */ }
+    if (mine) details.requestHeaders["X-NOrder-Client"] = `kitchen_app/${app.getVersion()}`;
+    cb({ requestHeaders: details.requestHeaders });
+  });
+}
+
+// 대기 중 신규 주문 수를 Dock(맥) 배지로 — 윈도우는 작업표시줄 깜빡임(flashFrame)으로 대신한다
+function setPendingBadge(count) {
+  try { app.setBadgeCount(Math.max(0, count | 0)); } catch { /* 미지원 */ }
+  if (count <= 0 && win) win.flashFrame(false);
 }
 
 function setAttention(on) {
@@ -146,17 +171,22 @@ function createWindow() {
 }
 
 // ── 신규 주문 알림 (preload 가 DOM 감시 후 호출) ──────────────
-ipcMain.on("norder:new-orders", (_e, { count }) => {
+// 운영 결정 #7 — repeat=true 는 수락·거절 전까지 30초마다 다시 오는 알림
+ipcMain.on("norder:new-orders", (_e, { count, repeat }) => {
   if (!win) return;
   new Notification({
-    title: "N오더 · 신규 주문",
-    body: `새 주문 ${count}건이 접수 대기 중입니다. 수락 마감 전에 확인해 주세요.`,
+    title: repeat ? "N오더 · 아직 수락하지 않은 주문" : "N오더 · 신규 주문",
+    body: repeat
+      ? `새 주문 ${count}건이 아직 수락·거절을 기다려요. 수락 마감 전에 확인해 주세요.`
+      : `새 주문 ${count}건이 접수 대기 중입니다. 수락 마감 전에 확인해 주세요.`,
     urgency: "critical",
   }).show();
+  setPendingBadge(count);
   win.flashFrame(true);
   if (win.isMinimized()) win.restore();
   win.show();
 });
+ipcMain.on("norder:pending", (_e, { count }) => setPendingBadge(count));
 ipcMain.on("norder:alert-ack", () => { if (win) win.flashFrame(false); });
 
 // ── 로그인 풀림(세션 12시간 만료 등) — preload 가 로그인 화면을 감지하면 1분마다 호출 ──
@@ -186,6 +216,17 @@ ipcMain.handle("norder:print-order", async (e, payload) => {
     }
   } catch { return { ok: false, error: "허용되지 않은 출처" }; }
   return printing.printOrder(payload, settings.printer);
+});
+
+// 대기열 자동 인쇄를 찜해도 되는지 — 인쇄 꺼짐·자동 인쇄 꺼짐이면 찜하지 않는다(같은 매장 다른 PC 몫으로 남긴다)
+ipcMain.handle("norder:print-enabled", () => settings.printer.mode !== "off" && settings.printer.autoPrint !== false);
+ipcMain.on("norder:print-failed", (_e, { orderNo }) => {
+  new Notification({
+    title: "N오더 · 주문서 인쇄 실패",
+    body: `주문 ${orderNo || ""} 주문서를 인쇄하지 못했어요. 프린터를 확인해 주세요. 1분 뒤 다시 인쇄해요.`,
+    urgency: "critical",
+  }).show();
+  win?.flashFrame(true);
 });
 
 // ── 프린터 설정 창 ───────────────────────────────────────────

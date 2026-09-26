@@ -4,12 +4,17 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 // 주방프린터 브릿지 — 파트너 웹(print-client.tsx)이 수락 직후·재인쇄 시 호출한다.
+// v0.4.3 — printQueue: 자동 인쇄는 앱이 서버 대기열로 직접 한다(웹은 ?pr 자동 인쇄를 안 보낸다). appSound: 웹 알림음 토글 대신 앱 표시.
 contextBridge.exposeInMainWorld("norderKitchen", {
   printOrder: (payload) => ipcRenderer.invoke("norder:print-order", payload),
+  printQueue: true,
+  appSound: true,
 });
 
 const POLL_MS = 2000;
-const FETCH_MS = 20_000;          // 주문판 밖에서 신규 주문 확인 간격
+const FETCH_MS = 10_000;          // 주문판 밖에서 신규 주문 확인 간격
+const RING_REPEAT_MS = 30_000;    // 운영 결정 #7 — 수락·거절 전까지 다시 알림 간격
+const QUEUE_MS = 5_000;           // 운영 결정 #8 — 전표 자동 인쇄 대기열 확인 간격(겸 세션 연장)
 const HEALTH_MS = 30_000;         // 서버 연결 확인 간격
 const LOGIN_REMIND_MS = 60_000;   // 로그인 풀림 알림 반복 간격
 const CHIME_REPEATS = 3;
@@ -141,10 +146,20 @@ function showOverlay(count, isTest) {
   setTimeout(() => { if (document.getElementById("norder-desktop-alert") === el) dismissOverlay(); }, 60_000);
 }
 
-function alarm(count, isTest = false) {
-  chime(CHIME_REPEATS);
-  showOverlay(count, isTest);
-  if (!isTest) ipcRenderer.send("norder:new-orders", { count });
+let lastRingAt = 0;
+function alarm(count, isTest = false, repeat = false) {
+  chime(repeat ? 2 : CHIME_REPEATS);
+  // 주문판에서 반복할 때는 전면 팝업으로 카드를 가리지 않는다(웹 띠·제목이 보인다). 다른 화면이면 팝업도 다시.
+  if (!repeat || location.pathname !== BOARD_PATH) showOverlay(count, isTest);
+  if (!isTest) {
+    lastRingAt = Date.now();
+    // 검증용 흔적(격리된 preload 라 window 대신 DOM 속성) — 게이트가 30초 반복을 읽는다
+    const prev = Number(document.documentElement.getAttribute("data-norder-ring-count") || 0);
+    document.documentElement.setAttribute("data-norder-ring-count", String(prev + 1));
+    document.documentElement.setAttribute("data-norder-ring-at", String(lastRingAt));
+    console.info(`[norder-app-ring] ${new Date().toLocaleTimeString("ko-KR", { hour12: false })} pending=${count} repeat=${repeat}`);
+    ipcRenderer.send("norder:new-orders", { count, repeat });
+  }
 }
 
 ipcRenderer.on("norder:test-alarm", () => alarm(0, true));
@@ -214,10 +229,69 @@ async function checkHealth() {
   }
 }
 
+// ── 운영 결정 #8 — 전표 자동 인쇄 대기열 ─────────────────────
+// 휴대폰·웹·이 앱 어디서 수락했든 서버의 «최근 15분 안에 수락·아직 안 찍힘» 주문을 가져와 찍는다.
+// 한 주문은 서버 찜(claim)을 잡은 앱 한 대만 찍고, 성공하면 서버에 기록한다 → 앱 두 대·재시작·재시도에도 1번.
+// 실패하면 서버에 실패를 보고(60초 뒤 자동 재시도, 3번째 실패에서 멈춤)하고 상단 띠 + OS 알림으로 [주문서 재인쇄]를 안내한다.
+let queueBusy = false;
+let queueOff = false; // 옛 서버(대기열 API 없음) — 웹의 ?pr 자동 인쇄가 대신한다
+async function postKitchen(body) {
+  return fetch("/api/partner/kitchen/print", {
+    method: "POST", credentials: "same-origin", cache: "no-store",
+    headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+function showPrintFail(orderNo, error) {
+  let el = document.getElementById("norder-desktop-printfail");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "norder-desktop-printfail";
+    el.setAttribute("data-testid", "desktop-print-fail");
+    el.style.cssText = [
+      "position:fixed", "bottom:0", "left:0", "right:0", "z-index:2147483646", "padding:14px 20px",
+      "background:#C81E3C", "color:#fff", "font:600 17px/1.4 -apple-system,'Malgun Gothic',sans-serif",
+      "text-align:center", "word-break:keep-all", "cursor:pointer", "box-shadow:0 -4px 16px rgba(0,0,0,.25)",
+    ].join(";");
+    el.addEventListener("click", () => el.remove());
+    document.body?.appendChild(el);
+  }
+  el.innerHTML = `<div style="font-size:19px;font-weight:800">🖨 주문 ${orderNo || ""} 주문서 자동 인쇄에 실패했어요</div>`
+    + `<div style="font-weight:500;opacity:.95">프린터를 확인해 주세요. 1분 뒤 다시 인쇄해요(최대 3번). 급하면 주문판 카드의 [주문서 재인쇄]를 눌러 주세요. (눌러서 닫기)</div>`;
+  el.title = error || "";
+}
+async function drainPrintQueue() {
+  if (queueBusy || queueOff || location.pathname.startsWith("/partner/login")) return;
+  queueBusy = true;
+  try {
+    if (!(await ipcRenderer.invoke("norder:print-enabled"))) return; // 인쇄 꺼짐·자동 인쇄 꺼짐 — 찜하지 않는다(다른 PC 몫)
+    const res = await fetch("/api/partner/kitchen/queue", { credentials: "same-origin", cache: "no-store" });
+    if (res.status === 404) { queueOff = true; return; }
+    if (!res.ok || !(res.headers.get("content-type") || "").includes("application/json")) return;
+    const { ids } = await res.json();
+    for (const orderId of ids || []) {
+      const c = await postKitchen({ op: "claim", orderId });
+      if (!c.ok) continue; // 409 = 이미 찍혔거나 다른 앱이 찍는 중
+      const { token, payload } = await c.json();
+      let r;
+      try { r = await ipcRenderer.invoke("norder:print-order", { ...payload, reprint: false, source: "queue" }); }
+      catch (e) { r = { ok: false, error: String(e) }; }
+      await postKitchen({ op: "done", orderId, token, ok: !!r?.ok }).catch(() => {});
+      document.documentElement.setAttribute("data-norder-last-print", `${orderId}:${r?.ok ? "ok" : "fail"}`);
+      if (!r?.ok) {
+        showPrintFail(payload?.orderNo, r?.error);
+        ipcRenderer.send("norder:print-failed", { orderNo: payload?.orderNo, error: r?.error });
+      }
+    }
+  } catch { /* 네트워크 — 다음 주기 */ }
+  finally { queueBusy = false; }
+}
+
 if (/^https?:$/.test(location.protocol)) {
   window.addEventListener("offline", () => { healthFails = 2; showDisconnected(); });
   window.addEventListener("online", () => { if (healthFails >= 2) void checkHealth(); });
 
+  setInterval(() => { void drainPrintQueue(); }, QUEUE_MS);
+  let lastPending = -1;
   let seen = loadSeen(); // null = 이번 실행에서 아직 기준점 없음 → 첫 확인에 신규가 있으면 한 번 울린다
 
   setInterval(() => {
@@ -240,6 +314,8 @@ if (/^https?:$/.test(location.protocol)) {
     if (snap.ids) fresh = seen ? snap.ids.some((id) => !seen.ids.has(id)) : snap.count > 0;
     else fresh = seen ? snap.count > seen.count : snap.count > 0;
     if (fresh) alarm(snap.count);
+    else if (snap.count > 0 && Date.now() - lastRingAt >= RING_REPEAT_MS) alarm(snap.count, false, true);
+    if (snap.count !== lastPending) { lastPending = snap.count; ipcRenderer.send("norder:pending", { count: snap.count }); }
     const ids = new Set(seen?.ids ?? []);
     for (const id of snap.ids ?? []) ids.add(id);
     seen = { count: snap.count, ids };
