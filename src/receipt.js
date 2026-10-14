@@ -119,7 +119,10 @@ function buildReceiptLines(payload, cols) {
   text(payload.centerName || "-");
   if (payload.centerAddress) for (const l of wrap(payload.centerAddress, cols)) text(l);
   if (payload.centerPhone) kvLines("센터 연락처", payload.centerPhone);
-  for (const l of wrap("* 고객 전달은 센터 인포데스크에서 픽업코드로", cols)) text(l);
+  // v0.4.6 — «고객 전달은 …» 줄은 서버가 센터 설정(인포데스크·무인 선반)에 맞춰 보낸다(0066). 옛 서버면 인포데스크 문구.
+  const receiveNote = typeof payload.receiveNote === "string" && payload.receiveNote.trim()
+    ? payload.receiveNote.trim() : "* 고객 전달은 센터 인포데스크에서 픽업코드로";
+  for (const l of wrap(receiveNote, cols)) text(l);
   hr();
 
   const a = payload.amounts || {};
@@ -133,7 +136,7 @@ function buildReceiptLines(payload, cols) {
   // 서버가 URL·SVG 를 다 만들어 준다(앱에 QR 라이브러리 없음). 옛 서버(dropQr 없음)면 이 블록을 건너뛴다.
   const q = payload.dropQr;
   if (q && typeof q.url === "string" && /^https?:\/\//.test(q.url)) {
-    for (const l of wrap(q.caption || "무인 선반 배달: 놓은 뒤 QR을 찍어 주세요", cols)) text(l, { align: "center", bold: true });
+    for (const l of wrap(q.caption || "배달 기사님께\n봉투를 놓고 아래 QR을 찍어 주세요 (도착 처리)", cols)) text(l, { align: "center", bold: true });
     L.push({ qr: { url: q.url, svg: typeof q.svg === "string" && q.svg.startsWith("<svg") ? q.svg : null } });
     text(`주문번호 ${payload.orderNo}`, { align: "center" });
     hr();
