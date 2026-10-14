@@ -129,6 +129,16 @@ function buildReceiptLines(payload, cols) {
   kvLines("결제금액", won(a.totalKrw ?? 0), { bold: true, size: 2 });
   hr();
 
+  // v0.4.5 — 무인 선반 배달 QR(서버 0065). 기사가 봉투를 선반에 놓고 찍으면 «센터 도착» 처리된다.
+  // 서버가 URL·SVG 를 다 만들어 준다(앱에 QR 라이브러리 없음). 옛 서버(dropQr 없음)면 이 블록을 건너뛴다.
+  const q = payload.dropQr;
+  if (q && typeof q.url === "string" && /^https?:\/\//.test(q.url)) {
+    for (const l of wrap(q.caption || "무인 선반 배달: 놓은 뒤 QR을 찍어 주세요", cols)) text(l, { align: "center", bold: true });
+    L.push({ qr: { url: q.url, svg: typeof q.svg === "string" && q.svg.startsWith("<svg") ? q.svg : null } });
+    text(`주문번호 ${payload.orderNo}`, { align: "center" });
+    hr();
+  }
+
   const shop = [payload.restaurantName, payload.branchLabel].filter(Boolean).join(" ");
   if (shop) text(shop, { align: "center" });
   if (ordered) text(`인쇄 ${fmtKst(new Date().toISOString())}`, { align: "center" });
@@ -149,6 +159,12 @@ function renderReceiptHtml(lines, widthMm, opts = {}) {
   const body = lines.map((l) => {
     if (l.hr) return `<div class="hr"></div>`;
     if (l.feed) return `<div style="height:${Math.round(l.feed * 8 * k)}px"></div>`;
+    if (l.qr) {
+      // SVG 가 없으면(이론상) 주소 글자라도 남긴다 — 사람이 직접 입력할 수 있게.
+      if (!l.qr.svg) return `<div class="ln c">${esc(l.qr.url)}</div>`;
+      const b64 = Buffer.from(l.qr.svg, "utf8").toString("base64");
+      return `<div class="qr"><img alt="QR" src="data:image/svg+xml;base64,${b64}"></div>`;
+    }
     const cls = [
       l.align === "center" ? "c" : l.align === "right" ? "r" : "",
       l.bold ? "b" : "",
@@ -172,6 +188,8 @@ function renderReceiptHtml(lines, widthMm, opts = {}) {
     .kv span:last-child { margin-left: auto; } /* 칸 계산보다 글꼴이 넓어 넘치면 값만 다음 줄 오른쪽으로 */
     .c { text-align: center; } .r { text-align: right; } .b { font-weight: 700; }
     .x2 { font-size: ${px(widthMm >= 80 ? 22 : 18)}; font-weight: 700; }
+    .qr { display: flex; justify-content: center; padding: ${px(6)} 0; }
+    .qr img { width: ${px(((widthMm >= 80 ? 34 : 30) / 25.4) * 96)}; height: auto; image-rendering: pixelated; }
     .hr { border-top: ${Math.max(1, Math.round(k))}px dashed #000; margin: ${px(4)} 0; }
   </style></head><body><div class="paper">${body}</div></body></html>`;
 }

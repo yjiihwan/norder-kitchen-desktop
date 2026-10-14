@@ -52,6 +52,20 @@ function buildEscpos(lines, opts = {}) {
       continue;
     }
     if (l.feed) { push(ESC, 0x64, l.feed); continue; }
+    if (l.qr) {
+      // 텍스트 모드 전용 — 프린터 내장 QR(GS ( k, 모델2·셀 6도트·오류정정 M). 래스터 모드는 HTML 의 그림이 찍힌다.
+      const data = Buffer.from(String(l.qr.url), "ascii");
+      const n = data.length + 3;
+      push(ESC, 0x61, 0x01);
+      push(GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00);
+      push(GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06);
+      push(GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31);
+      push(GS, 0x28, 0x6b, n & 0xff, (n >> 8) & 0xff, 0x31, 0x50, 0x30);
+      chunks.push(data);
+      push(GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30);
+      push(LF);
+      continue;
+    }
 
     push(ESC, 0x61, l.align === "center" ? 0x01 : l.align === "right" ? 0x02 : 0x00);
     push(ESC, 0x45, l.bold ? 0x01 : 0x00);
@@ -96,6 +110,11 @@ function emulate(buf, cols = 48) {
       const c = buf[i + 1];
       if (c === 0x21) { size = buf[i + 2] === 0x11 ? 2 : 1; i += 3; continue; }
       if (c === 0x56) { i += 4; continue; } // 컷
+      if (c === 0x28 && buf[i + 2] === 0x6b) { // GS ( k — QR 저장·인쇄
+        const len = buf[i + 3] + buf[i + 4] * 256;
+        if (buf[i + 6] === 0x50) out.push({ text: `[QR] ${buf.slice(i + 8, i + 5 + len).toString("ascii")}`, align, bold, size: 1 });
+        i += 5 + len; continue;
+      }
       i += 2; continue;
     }
     if (b === FS) { i += 2; continue; }
