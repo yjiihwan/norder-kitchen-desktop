@@ -1,5 +1,5 @@
-// N오더 주방 데스크톱 앱 — staging 파트너 화면(/partner/*) 전용 래퍼.
-// 정책: N오더는 staging 까지만 구현·검증한다. prod URL 을 넣지 않는다.
+// N오더 주방 데스크톱 앱 — 파트너 화면(/partner/*) 전용 래퍼.
+// 연결 서버는 빌드 채널(src/channel.js)로 정한다: 실서버용(norder.shop)·테스트서버용(staging) 설치파일을 따로 만든다.
 const {
   app, BrowserWindow, Menu, Notification, powerSaveBlocker,
   dialog, ipcMain, session,
@@ -8,12 +8,14 @@ const path = require("path");
 const printing = require("./printing");
 const sampleOrder = require("./sample-order");
 const { loadSettingsFile, saveSettingsFile } = require("./settings");
+const channel = require("./channel");
 
-const DEFAULT_SERVER = "https://norder-web-staging.up.railway.app";
+const DEFAULT_SERVER = channel.server;
 const START_PATH = "/partner/delivery";
 // 일시정지 조작부는 「전체 센터」 뷰(inst 필터 없음)에 있다 — 센터 탭에 머물러 있으면
 // 전체 일괄 멈춤/재개가 안 보이므로 inst 를 떼고 들어간다.
 const PAUSE_PATH = "/partner/delivery?tab=new";
+const EXTRA_ALLOWED_PATHS = ["/admin/password", "/logout"];
 const PARTITION = "persist:norder-kitchen";
 const OFFLINE_FILE = path.join(__dirname, "offline.html");
 
@@ -22,7 +24,10 @@ const settingsFile = () => path.join(app.getPath("userData"), "settings.json");
 function loadSettings() {
   // expectLogin: 로그인해 쓰던 기기인지 — 로그인 화면으로 떨어졌을 때 «로그인 풀림» 경보를 낼지 판단(처음 설치·직접 로그아웃은 조용히)
   const base = { autoLaunch: false, kiosk: false, expectLogin: false, serverUrl: DEFAULT_SERVER, printer: { ...printing.DEFAULT_PRINTER } };
-  return loadSettingsFile(settingsFile(), base);
+  const s = loadSettingsFile(settingsFile(), base);
+  const migrated = channel.migrateServerUrl(s.serverUrl, DEFAULT_SERVER);
+  if (migrated !== s.serverUrl) { s.serverUrl = migrated; saveSettings(s); }
+  return s;
 }
 function saveSettings(s) {
   saveSettingsFile(settingsFile(), s);
@@ -120,7 +125,7 @@ function createWindow() {
     height: 800,
     minWidth: 1000,
     minHeight: 640,
-    title: "N오더 주방 (staging)",
+    title: channel.title,
     backgroundColor: "#ffffff",
     kiosk: settings.kiosk,
     webPreferences: {
@@ -132,11 +137,13 @@ function createWindow() {
     },
   });
 
-  // 식당(파트너) 화면만 노출 — 그 외 경로·외부 도메인 이동 차단
+  // 식당(파트너) 화면만 노출 — 그 외 경로·외부 도메인 이동 차단.
+  // 예외: 임시 비밀번호 직원의 첫 로그인 비밀번호 변경 화면과 그 화면의 로그아웃 — 막으면 서버가 다시 이 화면으로 보내 무한 반복된다.
   const allowed = (rawUrl) => {
     try {
       const u = new URL(rawUrl);
-      return u.origin === serverOrigin() && u.pathname.startsWith("/partner");
+      if (u.origin !== serverOrigin()) return false;
+      return u.pathname.startsWith("/partner") || EXTRA_ALLOWED_PATHS.includes(u.pathname);
     } catch { return false; }
   };
   win.webContents.on("will-navigate", (e, url) => {
@@ -208,7 +215,7 @@ ipcMain.on("norder:logged-in", () => {
 });
 
 // ── 주방프린터 인쇄 (preload 브릿지 → printing.js) ────────────
-// 호출 출처를 파트너 화면(staging 서버 origin)으로 제한 — 임의 페이지의 인쇄 남용 차단.
+// 호출 출처를 연결된 서버 origin 으로 제한 — 임의 페이지의 인쇄 남용 차단.
 ipcMain.handle("norder:print-order", async (e, payload) => {
   try {
     if (new URL(e.senderFrame.url).origin !== serverOrigin()) {
@@ -347,7 +354,7 @@ function buildMenu() {
         {
           label: "정보",
           click: () => dialog.showMessageBox(win, {
-            message: "N오더 주방 (staging 전용)",
+            message: channel.about,
             detail: `버전 ${app.getVersion()}\n서버 ${settings.serverUrl}\n절전 방지 ${powerSaveBlocker.isStarted(blockerId) ? "켜짐" : "꺼짐"}`,
           }),
         },
