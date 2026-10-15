@@ -122,6 +122,7 @@ function showOverlay(count, isTest) {
   const el = document.createElement("div");
   el.id = "norder-desktop-alert";
   el.setAttribute("data-testid", "desktop-alert");
+  if (isTest) el.setAttribute("data-test", "1");
   el.style.cssText = [
     "position:fixed", "inset:0", "z-index:2147483647",
     "background:rgba(20,20,28,.55)", "display:flex", "align-items:center", "justify-content:center",
@@ -132,7 +133,7 @@ function showOverlay(count, isTest) {
                 box-shadow:0 12px 48px rgba(0,0,0,.35);max-width:80%;">
       <div style="font-size:56px;line-height:1">🔔</div>
       <div style="font-size:34px;font-weight:800;margin-top:12px;word-break:keep-all;">
-        ${isTest ? "알림 테스트" : `신규 주문 ${count}건`}
+        ${isTest ? "알림 테스트" : `신규 주문 <span data-norder-alert-count>${count}</span>건`}
       </div>
       <div style="font-size:18px;margin-top:10px;opacity:.92;word-break:keep-all;">
         ${isTest ? "소리·팝업이 정상 동작합니다. 화면을 누르면 닫힙니다." : "수락 마감 전에 확인해 주세요. 화면을 누르면 주문판으로 이동합니다."}
@@ -144,6 +145,15 @@ function showOverlay(count, isTest) {
   });
   document.body.appendChild(el);
   setTimeout(() => { if (document.getElementById("norder-desktop-alert") === el) dismissOverlay(); }, 60_000);
+}
+
+// 거절·수락·자동환불(다른 기기 처리 포함)로 신규 수가 바뀌면 떠 있는 알림창도 따라간다 — 0건이면 닫는다.
+function syncOverlay(count) {
+  const el = document.getElementById("norder-desktop-alert");
+  if (!el || el.getAttribute("data-test")) return;
+  if (count <= 0) { dismissOverlay(); return; }
+  const n = el.querySelector("[data-norder-alert-count]");
+  if (n && n.textContent !== String(count)) n.textContent = String(count);
 }
 
 let lastRingAt = 0;
@@ -313,6 +323,7 @@ if (/^https?:$/.test(location.protocol)) {
     let fresh;
     if (snap.ids) fresh = seen ? snap.ids.some((id) => !seen.ids.has(id)) : snap.count > 0;
     else fresh = seen ? snap.count > seen.count : snap.count > 0;
+    syncOverlay(snap.count);
     if (fresh) alarm(snap.count);
     else if (snap.count > 0 && Date.now() - lastRingAt >= RING_REPEAT_MS) alarm(snap.count, false, true);
     if (snap.count !== lastPending) { lastPending = snap.count; ipcRenderer.send("norder:pending", { count: snap.count }); }
