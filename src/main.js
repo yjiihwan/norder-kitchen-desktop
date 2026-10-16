@@ -2,14 +2,16 @@
 // 연결 서버는 빌드 채널(src/channel.js)로 정한다: 실서버용(norder.shop)·테스트서버용(staging) 설치파일을 따로 만든다.
 const {
   app, BrowserWindow, Menu, Notification, powerSaveBlocker,
-  dialog, ipcMain, session,
+  dialog, ipcMain, session, shell,
 } = require("electron");
+const fs = require("fs");
 const path = require("path");
 const printing = require("./printing");
 const { listComPorts } = require("./serial-print");
 const sampleOrder = require("./sample-order");
 const { loadSettingsFile, saveSettingsFile } = require("./settings");
 const channel = require("./channel");
+const { startUpdater } = require("./updater");
 
 const DEFAULT_SERVER = channel.server;
 const START_PATH = "/partner/delivery";
@@ -37,6 +39,8 @@ function saveSettings(s) {
 let settings;
 let win = null;
 let blockerId = null;
+let updater = null;
+let pendingCount = 0;
 
 // 검증용 — 설정·쿠키를 임시 폴더에 두고 띄운다(수동 실행에는 무영향)
 if (process.env.NORDER_USER_DATA) app.setPath("userData", process.env.NORDER_USER_DATA);
@@ -60,6 +64,7 @@ if (!gotLock) {
     global.__norderBlockerId = blockerId; // E2E 검증용 노출
     createWindow();
     buildMenu();
+    initUpdater();
     // E2E 검증용 — 실기 프린터 없이 설정창을 자동으로 띄운다(수동 실행에는 무영향)
     if (process.env.NORDER_OPEN_PRINTER_SETTINGS === "1") openPrinterSettings();
   });
@@ -110,6 +115,7 @@ function markKitchenAppRequests() {
 
 // 대기 중 신규 주문 수를 Dock(맥) 배지로 — 윈도우는 작업표시줄 깜빡임(flashFrame)으로 대신한다
 function setPendingBadge(count) {
+  pendingCount = Math.max(0, count | 0);
   try { app.setBadgeCount(Math.max(0, count | 0)); } catch { /* 미지원 */ }
   if (count <= 0 && win) win.flashFrame(false);
 }
@@ -272,6 +278,59 @@ ipcMain.handle("printer:test", (_e, printer) =>
 ipcMain.handle("printer:preview", (_e, printer) =>
   printing.printOrder(sampleOrder(), { ...printing.DEFAULT_PRINTER, ...printer, mode: "preview" }, { force: true }));
 
+// ── 자동 업데이트(updater.js) — 받아 두기만 하고, 설치는 종료할 때·사람이 누를 때만 ─────────
+const updateLogFile = () => path.join(app.getPath("userData"), "update.log");
+function updateLog(msg) {
+  try {
+    const f = updateLogFile();
+    if (fs.existsSync(f) && fs.statSync(f).size > 512 * 1024) fs.renameSync(f, `${f}.1`);
+    fs.appendFileSync(f, `${new Date().toISOString()} ${msg}\n`);
+  } catch { /* 기록 실패는 무시 */ }
+}
+
+let notifiedVersion = null;
+function initUpdater() {
+  if (process.env.NORDER_UPDATER === "off") return;
+  updater = startUpdater({
+    app, channelName: channel.CHANNEL, feed: channel.update, log: updateLog,
+    forceDev: process.env.NORDER_UPDATER_FORCE_DEV === "1",
+    ...(process.env.NORDER_UPDATER_FORCE_DEV === "1" && process.env.NORDER_UPDATER_TEST_PLATFORM
+      ? { platform: process.env.NORDER_UPDATER_TEST_PLATFORM, testPlatform: process.env.NORDER_UPDATER_TEST_PLATFORM } : {}),
+    firstCheckMs: Number(process.env.NORDER_UPDATER_FIRST_MS) || undefined,
+    onState: (st) => {
+      win?.webContents.send("norder:update-state", st);
+      buildMenu();
+      if ((st.kind === "ready" || st.kind === "available-manual") && notifiedVersion !== st.version) {
+        notifiedVersion = st.version;
+        new Notification({
+          title: "N오더 · 새 버전 " + st.version,
+          body: st.kind === "ready"
+            ? "새 버전을 받아 두었어요. 앱을 끌 때 자동으로 설치돼요. 주문이 없을 때 «재시작해서 업데이트»를 눌러도 돼요."
+            : "새 버전이 나왔어요. «새 버전 받기»를 눌러 설치해 주세요.",
+        }).show();
+      }
+    },
+  });
+}
+
+async function installUpdateNow() {
+  const st = updater?.getState();
+  if (!st) return { ok: false };
+  if (st.kind === "available-manual") { shell.openExternal(st.downloadUrl); return { ok: true }; }
+  if (st.kind !== "ready") return { ok: false };
+  const r = await dialog.showMessageBox(win, {
+    type: pendingCount > 0 ? "warning" : "question",
+    buttons: ["재시작해서 업데이트", "나중에"], defaultId: pendingCount > 0 ? 1 : 0, cancelId: 1,
+    message: `새 버전 ${st.version}으로 업데이트합니다.`,
+    detail: (pendingCount > 0 ? `⚠️ 아직 수락·거절하지 않은 새 주문이 ${pendingCount}건 있어요. 먼저 처리한 뒤 누르는 걸 권해요.\n\n` : "")
+      + "앱이 잠깐(1분 이내) 꺼졌다가 다시 켜져요. 그동안은 새 주문 알림과 자동 인쇄가 멈추고, 다시 켜지면 이어서 동작해요. 로그인과 프린터 설정은 그대로예요.",
+  });
+  if (r.response !== 0) return { ok: false };
+  return { ok: updater.installNow() };
+}
+ipcMain.handle("norder:update-get", () => updater?.getState() ?? { kind: "none" });
+ipcMain.handle("norder:update-install", () => installUpdateNow());
+
 // ── 메뉴 ─────────────────────────────────────────────────────
 /**
  * 주문을 보다가 한 번에 일시정지 조작부로. 경로는 /partner 로 시작하므로 allowed() 를 통과한다.
@@ -285,6 +344,21 @@ function gotoPause() {
       'document.querySelector(\'[data-testid="pn-dlv-status-banner"]\')?.scrollIntoView({ block: "start" });',
     ).catch(() => {});
   });
+}
+
+function updateMenuItems() {
+  const st = updater?.getState();
+  if (st?.kind === "ready") return [{ type: "separator" }, { label: `재시작해서 업데이트 (${st.version})`, click: () => installUpdateNow() }];
+  if (st?.kind === "available-manual") return [{ type: "separator" }, { label: `새 버전 받기 (${st.version})`, click: () => installUpdateNow() }];
+  return [];
+}
+
+function updateAboutLine() {
+  const st = updater?.getState();
+  if (st?.kind === "ready") return ` (새 버전 ${st.version} 받아 둠 — 종료할 때 설치)`;
+  if (st?.kind === "downloading") return ` (새 버전 ${st.version} 받는 중)`;
+  if (st?.kind === "available-manual") return ` (새 버전 ${st.version} 있음)`;
+  return "";
 }
 
 function buildMenu() {
@@ -311,6 +385,7 @@ function buildMenu() {
             win?.loadURL(settings.serverUrl + "/partner/login");
           },
         },
+        ...updateMenuItems(),
         { type: "separator" },
         { role: "quit", label: "종료" },
       ],
@@ -359,7 +434,7 @@ function buildMenu() {
           label: "정보",
           click: () => dialog.showMessageBox(win, {
             message: channel.about,
-            detail: `버전 ${app.getVersion()}\n서버 ${settings.serverUrl}\n절전 방지 ${powerSaveBlocker.isStarted(blockerId) ? "켜짐" : "꺼짐"}`,
+            detail: `버전 ${app.getVersion()}${updateAboutLine()}\n서버 ${settings.serverUrl}\n절전 방지 ${powerSaveBlocker.isStarted(blockerId) ? "켜짐" : "꺼짐"}`,
           }),
         },
       ],

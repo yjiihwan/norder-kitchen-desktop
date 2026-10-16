@@ -194,6 +194,40 @@ function setStatusBar(kind, title, body) {
   el.innerHTML = `<div style="font-size:20px;font-weight:800">${title}</div><div style="font-weight:500;opacity:.95">${body}</div>`;
 }
 
+// ── 새 버전 안내(오른쪽 아래 작은 알약) — 주문판·인쇄 실패 띠를 가리지 않게 작게, 누를 때만 재시작 ─────
+let updateState = { kind: "none" };
+function renderUpdatePill() {
+  let el = document.getElementById("norder-desktop-update");
+  const st = updateState;
+  if (st.kind !== "ready" && st.kind !== "available-manual") { el?.remove(); return; }
+  if (!document.body) return;
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "norder-desktop-update";
+    el.setAttribute("data-testid", "desktop-update");
+    el.style.cssText = [
+      "position:fixed", "right:16px", "bottom:16px", "z-index:2147483645", "display:flex", "gap:10px", "align-items:center",
+      "padding:10px 12px 10px 16px", "border-radius:999px", "background:#1F2937", "color:#fff",
+      "font:600 14px/1.3 -apple-system,'Malgun Gothic',sans-serif", "box-shadow:0 4px 16px rgba(0,0,0,.25)", "word-break:keep-all",
+    ].join(";");
+    const label = document.createElement("span");
+    const btn = document.createElement("button");
+    btn.setAttribute("data-testid", "desktop-update-btn");
+    btn.style.cssText = "border:0;border-radius:999px;padding:7px 14px;background:#fff;color:#111;font:700 14px/1 -apple-system,'Malgun Gothic',sans-serif;cursor:pointer";
+    btn.addEventListener("click", () => { void ipcRenderer.invoke("norder:update-install"); });
+    el.append(label, btn);
+    document.body.appendChild(el);
+  }
+  const [label, btn] = el.children;
+  label.textContent = st.kind === "ready" ? `새 버전 ${st.version} 준비됨 · 앱을 끌 때 설치돼요` : `새 버전 ${st.version}이 나왔어요`;
+  btn.textContent = st.kind === "ready" ? "재시작해서 업데이트" : "새 버전 받기";
+}
+ipcRenderer.on("norder:update-state", (_e, st) => { updateState = st || { kind: "none" }; renderUpdatePill(); });
+window.addEventListener("DOMContentLoaded", async () => {
+  try { updateState = (await ipcRenderer.invoke("norder:update-get")) || updateState; } catch { /* */ }
+  renderUpdatePill();
+});
+
 // ── 로그인 풀림(세션 12시간 만료·로그아웃·비번 변경) ───────────
 let lastLoginAlert = 0;
 async function onLoggedOut() {

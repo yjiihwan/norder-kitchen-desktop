@@ -1,7 +1,7 @@
 {
   "name": "norder-kitchen",
   "productName": "N오더 주방",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "private": true,
   "description": "N오더 식당(점주·주방)용 주문 접수 데스크톱 앱 — 실서버용(prod)·테스트서버용(staging) 빌드 분리",
   "main": "src/main.js",
@@ -75,9 +75,11 @@
       "deleteAppDataOnUninstall": false,
       "shortcutName": "N오더 주방"
     },
-    "npmRebuild": false
+    "npmRebuild": false,
+    "publish": null
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "iconv-lite": "^0.7.3",
     "serialport": "^13.0.0"
   }

@@ -9,3 +9,4 @@ electron-builder.env
 *.p12
 *.p8
 *.cer
+release_out/
