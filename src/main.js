@@ -244,7 +244,7 @@ let psWin = null;
 function openPrinterSettings() {
   if (psWin) { psWin.show(); psWin.focus(); return; }
   psWin = new BrowserWindow({
-    width: 640, height: 820, parent: win ?? undefined, title: "프린터 설정",
+    width: 620, height: 760, parent: win ?? undefined, title: "프린터 설정",
     backgroundColor: "#f7f7f9", minimizable: false, maximizable: false,
     webPreferences: {
       preload: path.join(__dirname, "printer-settings-preload.js"),

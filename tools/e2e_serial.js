@@ -2,10 +2,10 @@
 //  ① 가상 시리얼 쌍(pty, com0com 대용)으로 printOrder(serial) → 받은 바이트 = 만든 ESC/POS, CP949 한글 복원
 //  ② 다른 프로세스가 포트를 잡고 있으면 재시도 → 놓으면 이어서 인쇄 / 끝까지 잡혀 있으면 «배달앱 사용 중» 안내 + busy 표시
 //  ③ 인쇄 뒤 포트가 닫혀 다른 프로그램이 바로 열 수 있음  ④ 윈도우 오류 문구(«COM2: Access denied») 분류
-//  ⑤ 설정창: COM 항목·포트 목록·통신 설정 저장값 왕복 + 스크린샷(기존 항목 위치 비교)
+//  ⑤ 설정 파일 왕복(COM 값·0.4.8 파일) — 설정 화면은 tools/e2e_settings_simple.js
 // 실행: npx electron tools/e2e_serial.js [출력폴더]
-const { app, BrowserWindow, ipcMain } = require("electron");
-const { spawn, execFileSync } = require("child_process");
+const { app } = require("electron");
+const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const iconv = require("iconv-lite");
@@ -43,45 +43,6 @@ const holdPort = (p) => new Promise((resolve, reject) => {
   sp.open((e) => (e ? reject(e) : resolve(sp)));
 });
 const release = (sp) => new Promise((r) => sp.close(() => r()));
-
-async function settingsWindow(htmlFile, state, tag) {
-  ipcMain.removeHandler("printer:get-state");
-  ipcMain.handle("printer:get-state", async () => state);
-  const w = new BrowserWindow({
-    show: false, width: 640, height: 820,
-    webPreferences: {
-      preload: path.join(__dirname, "../src/printer-settings-preload.js"),
-      contextIsolation: true, nodeIntegration: false, offscreen: true,
-    },
-  });
-  const errors = [];
-  w.webContents.on("console-message", (_e, level, msg) => { if (level >= 3) errors.push(msg); });
-  await w.loadFile(htmlFile);
-  await sleep(500);
-  return { w, errors, tag };
-}
-
-async function shot(w, file) {
-  const h = await w.webContents.executeJavaScript("document.body.scrollHeight");
-  w.setSize(640, h + 10);
-  await sleep(350);
-  fs.writeFileSync(file, (await w.webContents.capturePage()).toPNG());
-  console.log("saved", file);
-}
-
-// 기존 항목들의 박스 — 잘림(폭 넘침)·겹침 확인용
-const LAYOUT_JS = `(() => {
-  const r = (sel) => { const e = document.querySelector(sel); if (!e) return null; const b = e.getBoundingClientRect();
-    return { x: b.x, y: b.y, w: b.width, h: b.height, right: b.right }; };
-  return {
-    vw: document.documentElement.clientWidth,
-    scrollW: document.documentElement.scrollWidth,
-    ip: r('[data-testid=ps-ip]'), port: r('[data-testid=ps-port]'), usb: r('[data-testid=ps-usb-printer]'),
-    sys: r('[data-testid=ps-sys-printer]'), com: r('[data-testid=ps-com-path]'), flow: r('[data-testid=ps-com-flow]'),
-    save: r('[data-testid=ps-save]'),
-    overflow: [...document.querySelectorAll('.card *')].filter((e) => e.getBoundingClientRect().right > document.querySelector('.wrap').getBoundingClientRect().right + 1).map((e) => e.tagName + '.' + (e.getAttribute('data-testid') || e.className)).slice(0, 5),
-  };
-})()`;
 
 app.on("window-all-closed", () => { /* 렌더 창이 닫혀도 테스트는 계속 */ });
 app.whenReady().then(async () => {
@@ -193,78 +154,17 @@ app.whenReady().then(async () => {
 
     console.log("═ ⑤ 설정창");
     const comPorts = lst;
-    // 이전본(v0.4.8) 화면 — 비교 기준
-    const oldHtml = path.join(outDir, "printer-settings.v048.html");
-    fs.writeFileSync(oldHtml, execFileSync("git", ["show", "7908cab:src/printer-settings.html"], { cwd: path.join(__dirname, "..") }));
-    fs.copyFileSync(path.join(__dirname, "../src/printer-settings-preload.js"), path.join(outDir, "printer-settings-preload.js"));
-    const base = { printer: { ...printing.DEFAULT_PRINTER, mode: "usbraw", osPrinterName: "EPSON TM-T88 Receipt" }, osPrinters, comPorts };
-    let s = await settingsWindow(oldHtml, base, "old");
-    const oldLayout = await s.w.webContents.executeJavaScript(LAYOUT_JS);
-    await shot(s.w, path.join(outDir, "settings_v048_before.png"));
-    s.w.destroy();
-
-    s = await settingsWindow(path.join(__dirname, "../src/printer-settings.html"), base, "new");
-    ok("새 설정창 JS 오류 없음", s.errors.length === 0, s.errors.join(" | "));
-    const newLayout = await s.w.webContents.executeJavaScript(LAYOUT_JS);
-    ok("가로 넘침 없음", newLayout.scrollW <= newLayout.vw && newLayout.overflow.length === 0, JSON.stringify(newLayout.overflow));
-    ok("네트워크 IP·포트 칸 위치 그대로", JSON.stringify(newLayout.ip) === JSON.stringify(oldLayout.ip) && JSON.stringify(newLayout.port) === JSON.stringify(oldLayout.port));
-    ok("USB 프린터 목록 위치·크기 그대로", JSON.stringify(newLayout.usb) === JSON.stringify(oldLayout.usb), `${JSON.stringify(oldLayout.usb)} → ${JSON.stringify(newLayout.usb)}`);
-    ok("일반 인쇄 목록 폭 그대로(COM 항목만큼 아래로)", newLayout.sys.w === oldLayout.sys.w && newLayout.sys.x === oldLayout.sys.x && newLayout.sys.y > oldLayout.sys.y);
-    const st = await s.w.webContents.executeJavaScript(`({
-      usbSel: document.querySelector('select[name=usbPrinter]').value,
-      usbOpts: document.querySelectorAll('select[name=usbPrinter] option').length,
-      comGroups: [...document.querySelectorAll('select[name=comPath] optgroup')].map((g) => g.label + ':' + g.children.length),
-      hint: document.getElementById('comRasterHint').hidden,
-    })`);
-    ok("USB 선택값 유지(EPSON)", st.usbSel === "EPSON TM-T88 Receipt" && st.usbOpts === 3);
-    ok("COM 목록: 찾은 단자 2 + 직접 5", st.comGroups.join("|") === "이 PC에서 찾은 단자:2|직접 선택:5", st.comGroups.join("|"));
-    ok("USB 모드에선 COM 안내 숨김", st.hint === true);
-    await shot(s.w, path.join(outDir, "settings_v049_usb_selected.png"));
-
-    // COM 선택 → 텍스트 자동 선택, 값 바꿔 저장 → 폼 값 확인
-    let saved = null;
-    ipcMain.removeHandler("printer:save");
-    ipcMain.handle("printer:save", (_e, p) => { saved = p; return { ok: true }; });
-    const form = await s.w.webContents.executeJavaScript(`(async () => {
-      const r = document.querySelector('[data-testid=ps-mode-serial]'); r.click();
-      const set = (n, v) => { const e = document.querySelector('select[name=' + n + ']'); e.value = v; };
-      set('comPath', 'COM2'); set('comBaud', '19200'); set('comFlow', 'dsrdtr');
-      const before = document.getElementById('comRasterHint').hidden;
-      document.querySelector('input[name=escposOutput][value=raster]').click();
-      const rasterHint = !document.getElementById('comRasterHint').hidden;
-      document.querySelector('input[name=escposOutput][value=text]').click();
-      document.getElementById('save').click();
-      await new Promise((r) => setTimeout(r, 200));
-      return { before, rasterHint, msg: document.getElementById('msg').textContent };
-    })()`);
-    ok("COM 고르면 텍스트 인쇄 자동 선택(안내 숨김)", form.before === true);
-    ok("COM + 이미지 인쇄면 «텍스트 권장» 안내 표시", form.rasterHint === true);
-    ok("저장값: mode=serial·COM2·19200·8N1·DTR/DSR·text", saved && saved.mode === "serial" && saved.comPath === "COM2" && saved.comBaud === 19200
-      && saved.comDataBits === 8 && saved.comParity === "none" && saved.comStopBits === 1 && saved.comFlow === "dsrdtr" && saved.escposOutput === "text", JSON.stringify(saved));
-    await shot(s.w, path.join(outDir, "settings_v049_com_selected.png"));
-    s.w.destroy();
-
-    // 저장 → 재실행 로드 왕복(src/settings.js) 후 화면에 다시 채워지는지
+    // 설정 화면 검증은 0.4.9 단순화 이후 tools/e2e_settings_simple.js 가 맡는다(0.4.8 설정 이어받기·레이아웃·회귀).
+    void comPorts;
+    const saved = { ...printing.DEFAULT_PRINTER, mode: "serial", comPath: "COM2", comBaud: 19200, comFlow: "dsrdtr", escposOutput: "text" };
     const { loadSettingsFile, saveSettingsFile } = require("../src/settings");
     const tmp = path.join(outDir, "e2e-settings.json");
-    saveSettingsFile(tmp, { printer: { ...printing.DEFAULT_PRINTER, ...saved } });
+    saveSettingsFile(tmp, { printer: saved });
     const re = loadSettingsFile(tmp, { printer: { ...printing.DEFAULT_PRINTER } });
     ok("설정 파일 왕복 — COM 값 유지", re.printer.comPath === "COM2" && re.printer.comBaud === 19200 && re.printer.comFlow === "dsrdtr");
     fs.writeFileSync(tmp, JSON.stringify({ printer: { mode: "usbraw", osPrinterName: "X" } }));
     const old = loadSettingsFile(tmp, { printer: { ...printing.DEFAULT_PRINTER } });
     ok("옛 설정 파일(0.4.8) → USB 그대로 + COM 기본 9600·8N1", old.printer.mode === "usbraw" && old.printer.osPrinterName === "X" && old.printer.comBaud === 9600 && old.printer.comFlow === "none");
-
-    s = await settingsWindow(path.join(__dirname, "../src/printer-settings.html"),
-      { printer: re.printer, osPrinters, comPorts: { detected: [], manual: serial.FALLBACK_PORTS.map((p) => ({ path: p, label: p })), error: "x" } }, "reload");
-    const back = await s.w.webContents.executeJavaScript(`({
-      mode: document.querySelector('input[name=mode]:checked').value, com: document.querySelector('select[name=comPath]').value,
-      baud: document.querySelector('select[name=comBaud]').value, flow: document.querySelector('select[name=comFlow]').value,
-      groups: [...document.querySelectorAll('select[name=comPath] optgroup')].map((g) => g.label),
-    })`);
-    ok("다시 열면 COM2·19200·DTR/DSR 채워짐", back.mode === "serial" && back.com === "COM2" && back.baud === "19200" && back.flow === "dsrdtr", JSON.stringify(back));
-    ok("목록 못 읽으면 «직접 선택» 그룹만", back.groups.length === 1 && back.groups[0].includes("직접 선택"), back.groups.join());
-    await shot(s.w, path.join(outDir, "settings_v049_com_fallback.png"));
-    s.w.destroy();
 
     pty.close();
     console.log(`\n════ 통과 ${pass}/${pass + fail}`);

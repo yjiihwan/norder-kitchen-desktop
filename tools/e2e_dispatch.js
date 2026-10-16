@@ -43,6 +43,7 @@ async function captureSettings() {
       { name: "Generic 58mm POS", displayName: "Generic 58mm POS", isDefault: false },
     ],
   }));
+  ipcMain.handle("printer:save", () => ({ ok: true })); // 단순화 화면은 바꿀 때마다 저장한다
   const w = new BrowserWindow({
     show: false, width: 620, height: 980,
     webPreferences: {
@@ -55,15 +56,15 @@ async function captureSettings() {
   await w.loadFile(path.join(__dirname, "../src/printer-settings.html"));
   await new Promise((r) => setTimeout(r, 500));
   const state = await w.webContents.executeJavaScript(`({
-    rasterChecked: document.querySelector('input[name=escposOutput][value=raster]').checked,
-    textChecked: document.querySelector('input[name=escposOutput][value=text]').checked,
-    formOutput: document.querySelector('input[name=escposOutput]:checked')?.value ?? null,
+    rasterChecked: document.querySelector('select[name=outputMode]').value === 'auto',
+    textChecked: document.querySelector('select[name=outputMode]').value === 'text',
+    formOutput: currentForm().escposOutput,
     copiesDefault: currentForm().copies,
     copiesSeg: document.querySelectorAll('[data-testid=ps-copies] [data-c]').length,
     copiesOn: document.querySelector('[data-testid=ps-copies] .on')?.dataset.c ?? null,
   })`);
   ok("설정창 JS 오류 없음", errors.length === 0, errors.join(" | "));
-  ok("초기 선택 = 이미지 인쇄(raster)", state.rasterChecked && !state.textChecked);
+  ok("초기 인쇄 방식 = 자동(이미지)", state.rasterChecked && !state.textChecked);
   ok("폼 escposOutput = raster", state.formOutput === "raster");
   ok("매수 세그 1~5매 렌더", state.copiesSeg === 5);
   ok("매수 기본값 = 1매", state.copiesDefault === 1 && state.copiesOn === "1");
