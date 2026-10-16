@@ -266,7 +266,9 @@ function showPrintFail(orderNo, error) {
     document.body?.appendChild(el);
   }
   el.innerHTML = `<div style="font-size:19px;font-weight:800">🖨 주문 ${orderNo || ""} 주문서 자동 인쇄에 실패했어요</div>`
+    + `<div data-testid="desktop-print-fail-reason" style="font-weight:700"></div>`
     + `<div style="font-weight:500;opacity:.95">프린터를 확인해 주세요. 1분 뒤 다시 인쇄해요(최대 3번). 급하면 주문판 카드의 [주문서 재인쇄]를 눌러 주세요. (눌러서 닫기)</div>`;
+  el.querySelector("[data-testid=desktop-print-fail-reason]").textContent = error || "";
   el.title = error || "";
 }
 async function drainPrintQueue() {
@@ -289,7 +291,7 @@ async function drainPrintQueue() {
       document.documentElement.setAttribute("data-norder-last-print", `${orderId}:${r?.ok ? "ok" : "fail"}`);
       if (!r?.ok) {
         showPrintFail(payload?.orderNo, r?.error);
-        ipcRenderer.send("norder:print-failed", { orderNo: payload?.orderNo, error: r?.error });
+        ipcRenderer.send("norder:print-failed", { orderNo: payload?.orderNo, error: r?.error, busy: !!r?.busy });
       }
     }
   } catch { /* 네트워크 — 다음 주기 */ }

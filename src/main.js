@@ -6,6 +6,7 @@ const {
 } = require("electron");
 const path = require("path");
 const printing = require("./printing");
+const { listComPorts } = require("./serial-print");
 const sampleOrder = require("./sample-order");
 const { loadSettingsFile, saveSettingsFile } = require("./settings");
 const channel = require("./channel");
@@ -227,10 +228,12 @@ ipcMain.handle("norder:print-order", async (e, payload) => {
 
 // 대기열 자동 인쇄를 찜해도 되는지 — 인쇄 꺼짐·자동 인쇄 꺼짐이면 찜하지 않는다(같은 매장 다른 PC 몫으로 남긴다)
 ipcMain.handle("norder:print-enabled", () => settings.printer.mode !== "off" && settings.printer.autoPrint !== false);
-ipcMain.on("norder:print-failed", (_e, { orderNo }) => {
+ipcMain.on("norder:print-failed", (_e, { orderNo, busy }) => {
   new Notification({
     title: "N오더 · 주문서 인쇄 실패",
-    body: `주문 ${orderNo || ""} 주문서를 인쇄하지 못했어요. 프린터를 확인해 주세요. 1분 뒤 다시 인쇄해요.`,
+    body: busy
+      ? `주문 ${orderNo || ""} — 다른 프로그램(예: 배달앱)이 프린터를 사용 중이라 인쇄하지 못했어요. 1분 뒤 다시 인쇄해요.`
+      : `주문 ${orderNo || ""} 주문서를 인쇄하지 못했어요. 프린터를 확인해 주세요. 1분 뒤 다시 인쇄해요.`,
     urgency: "critical",
   }).show();
   win?.flashFrame(true);
@@ -241,7 +244,7 @@ let psWin = null;
 function openPrinterSettings() {
   if (psWin) { psWin.show(); psWin.focus(); return; }
   psWin = new BrowserWindow({
-    width: 620, height: 760, parent: win ?? undefined, title: "프린터 설정",
+    width: 640, height: 820, parent: win ?? undefined, title: "프린터 설정",
     backgroundColor: "#f7f7f9", minimizable: false, maximizable: false,
     webPreferences: {
       preload: path.join(__dirname, "printer-settings-preload.js"),
@@ -256,7 +259,8 @@ function openPrinterSettings() {
 ipcMain.handle("printer:get-state", async () => {
   let osPrinters = [];
   try { osPrinters = await (win ?? psWin).webContents.getPrintersAsync(); } catch { /* 프린터 없음 */ }
-  return { printer: settings.printer, osPrinters };
+  const comPorts = await listComPorts();
+  return { printer: settings.printer, osPrinters, comPorts };
 });
 ipcMain.handle("printer:save", (_e, printer) => {
   settings.printer = { ...printing.DEFAULT_PRINTER, ...printer };

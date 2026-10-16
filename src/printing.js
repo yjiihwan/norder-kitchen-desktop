@@ -1,4 +1,4 @@
-// 인쇄 디스패처(메인 프로세스) — 설정에 따라 네트워크(9100)/OS 프린터 큐 RAW(USB)/OS 기본 인쇄/미리보기.
+// 인쇄 디스패처(메인 프로세스) — 설정에 따라 네트워크(9100)/OS 프린터 큐 RAW(USB)/COM 단자/OS 기본 인쇄/미리보기.
 // 실물이 없어도 검증 가능하도록 «미리보기» 모드는 전표를 PNG로 렌더해 연다.
 const { BrowserWindow, shell, app, nativeImage } = require("electron");
 const net = require("net");
@@ -8,9 +8,10 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { buildReceiptLines, renderReceiptHtml } = require("./receipt");
 const { buildEscpos, buildEscposRaster } = require("./escpos");
+const { DEFAULT_SERIAL, sendToSerial } = require("./serial-print");
 
 const DEFAULT_PRINTER = {
-  mode: "preview",          // preview | network | usbraw | system | off
+  mode: "preview",          // preview | network | usbraw | serial | system | off
   ip: "", port: 9100,       // network
   osPrinterName: "",        // usbraw(윈도우 프린터 큐 이름) · system(장치 이름)
   widthMm: 80,              // 80 | 58
@@ -19,6 +20,7 @@ const DEFAULT_PRINTER = {
   // raster(기본): 전표를 이미지로 변환해 인쇄 — 프린터 한글 펌웨어·코드페이지와 무관, 전 기종 호환.
   // text: CP949 텍스트 직접 전송 — 국산(한글 내장) 기종 전용, 빠름.
   escposOutput: "raster",
+  ...DEFAULT_SERIAL,        // serial(COM 단자): comPath·comBaud·comDataBits·comParity·comStopBits·comFlow
 };
 
 const colsOf = (widthMm) => (Number(widthMm) === 58 ? 32 : 48);
@@ -253,6 +255,10 @@ async function printOrder(payload, printer, opts = {}) {
       if (!p.osPrinterName) return { ok: false, error: "프린터(큐 이름)가 선택되지 않았어요" };
       const one = await buildEscposBuffer(p, lines, cols);
       await sendToOsQueueRaw(Buffer.concat(Array(copies).fill(one)), p.osPrinterName);
+    } else if (p.mode === "serial") {
+      if (!p.comPath) return { ok: false, error: "COM 단자가 선택되지 않았어요 (설정 > 프린터 설정)" };
+      const one = await buildEscposBuffer(p, lines, cols);
+      await sendToSerial(Buffer.concat(Array(copies).fill(one)), p, opts.serial);
     } else if (p.mode === "system") {
       for (let c = 0; c < copies; c++) {
         await printViaSystem(renderReceiptHtml(lines, p.widthMm), p.widthMm, p.osPrinterName);
@@ -275,7 +281,7 @@ async function printOrder(payload, printer, opts = {}) {
     markPrinted();
     return { ok: true, copies };
   } catch (e) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: e.message, ...(e.busy ? { busy: true } : {}) };
   }
 }
 
